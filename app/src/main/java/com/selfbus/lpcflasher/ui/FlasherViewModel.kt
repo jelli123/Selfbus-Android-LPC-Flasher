@@ -76,8 +76,8 @@ class FlasherViewModel(application: Application) : AndroidViewModel(application)
         serial.onConnectionChanged = { connected, chip ->
             _uiState.value = _uiState.value.copy(
                 isConnected = connected,
-                chipName = chip?.name,
-                chipSpecs = chip?.let { "${it.flashSize / 1024} KB Flash, ${it.ramSize / 1024} KB RAM" },
+                chipName = chip?.name ?: _uiState.value.chipName,
+                chipSpecs = chip?.let { "${it.flashSize / 1024} KB Flash, ${it.ramSize / 1024} KB RAM" } ?: _uiState.value.chipSpecs,
                 uid = if (connected) serial.detectedUid else _uiState.value.uid
             )
         }

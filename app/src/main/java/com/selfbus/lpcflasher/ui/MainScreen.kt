@@ -151,7 +151,13 @@ fun ConnectionSection(
 
             if (uiState.uid != null) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("UID: ${uiState.uid}", style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                    Text(
+                        "UID: ${uiState.uid}",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier.weight(1f),
+                        maxLines = 2
+                    )
                     Spacer(Modifier.width(4.dp))
                     val clipboard = LocalClipboardManager.current
                     IconButton(onClick = { clipboard.setText(AnnotatedString(uiState.uid)) }, modifier = Modifier.size(24.dp)) {
