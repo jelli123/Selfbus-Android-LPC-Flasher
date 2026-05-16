@@ -10,6 +10,7 @@ import android.hardware.usb.UsbManager
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.core.content.ContextCompat
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
@@ -74,13 +75,8 @@ class MainActivity : ComponentActivity() {
             addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
         }
         val permissionFilter = IntentFilter(ACTION_USB_PERMISSION)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(usbReceiver, systemFilter, Context.RECEIVER_EXPORTED)
-            registerReceiver(usbReceiver, permissionFilter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            registerReceiver(usbReceiver, systemFilter)
-            registerReceiver(usbReceiver, permissionFilter)
-        }
+        ContextCompat.registerReceiver(this, usbReceiver, systemFilter, ContextCompat.RECEIVER_EXPORTED)
+        ContextCompat.registerReceiver(this, usbReceiver, permissionFilter, ContextCompat.RECEIVER_NOT_EXPORTED)
 
         // Handle USB device attached via intent
         intent?.let { handleUsbIntent(it) }
