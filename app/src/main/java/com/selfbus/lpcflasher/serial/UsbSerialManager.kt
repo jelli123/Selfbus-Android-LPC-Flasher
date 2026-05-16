@@ -395,7 +395,7 @@ class UsbSerialManager(private val context: Context) {
     // ---- UID Reading ----
 
     /**
-     * ISP 'N' command → 4 words → 12-byte UID hex string.
+     * ISP 'N' command → 4 words → 16-byte UID hex string.
      */
     suspend fun readUID(): String? {
         sendLine("N")
@@ -412,7 +412,7 @@ class UsbSerialManager(private val context: Context) {
             words.add(v and 0xFFFFFFFFL)
         }
 
-        // 4 words → 16 bytes (little-endian), show first 12
+        // 4 words → 16 bytes (little-endian)
         val bytes = mutableListOf<Int>()
         for (w in words) {
             bytes.add((w and 0xFF).toInt())
@@ -420,8 +420,7 @@ class UsbSerialManager(private val context: Context) {
             bytes.add((w shr 16 and 0xFF).toInt())
             bytes.add((w shr 24 and 0xFF).toInt())
         }
-        val uid12 = bytes.take(12)
-        val uidString = uid12.joinToString(":") {
+        val uidString = bytes.joinToString(":") {
             it.toString(16).uppercase().padStart(2, '0')
         }
         Logger.debug("UID: $uidString")

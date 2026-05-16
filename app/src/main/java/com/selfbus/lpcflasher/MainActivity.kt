@@ -68,16 +68,18 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Register USB broadcast receiver
-        val filter = IntentFilter().apply {
+        // Register USB broadcast receiver – split by export scope
+        val systemFilter = IntentFilter().apply {
             addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
             addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
-            addAction(ACTION_USB_PERMISSION)
         }
+        val permissionFilter = IntentFilter(ACTION_USB_PERMISSION)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(usbReceiver, filter, Context.RECEIVER_EXPORTED)
+            registerReceiver(usbReceiver, systemFilter, Context.RECEIVER_EXPORTED)
+            registerReceiver(usbReceiver, permissionFilter, Context.RECEIVER_NOT_EXPORTED)
         } else {
-            registerReceiver(usbReceiver, filter)
+            registerReceiver(usbReceiver, systemFilter)
+            registerReceiver(usbReceiver, permissionFilter)
         }
 
         // Handle USB device attached via intent
