@@ -150,24 +150,25 @@ fun ConnectionSection(
             }
 
             if (uiState.uid != null) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Column {
                     Text(
                         "UID: ${uiState.uid}",
                         style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace,
-                        modifier = Modifier.weight(1f),
-                        maxLines = 2
+                        fontFamily = FontFamily.Monospace
                     )
-                    Spacer(Modifier.width(4.dp))
-                    val clipboard = LocalClipboardManager.current
-                    IconButton(onClick = { clipboard.setText(AnnotatedString(uiState.uid)) }, modifier = Modifier.size(24.dp)) {
-                        Icon(Icons.Default.ContentCopy, contentDescription = "Copy UID", modifier = Modifier.size(16.dp))
-                    }
-                    IconButton(onClick = {
-                        val ts = java.text.SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", java.util.Locale.getDefault()).format(java.util.Date())
-                        onSaveFile("uid_$ts.txt", "UID: ${uiState.uid}")
-                    }, modifier = Modifier.size(24.dp)) {
-                        Icon(Icons.Default.Save, contentDescription = t("saveUid"), modifier = Modifier.size(16.dp))
+                    Row {
+                        Spacer(Modifier.weight(1f))
+                        val clipboard = LocalClipboardManager.current
+                        IconButton(onClick = { clipboard.setText(AnnotatedString(uiState.uid)) }, modifier = Modifier.size(24.dp)) {
+                            Icon(Icons.Default.ContentCopy, contentDescription = "Copy UID", modifier = Modifier.size(16.dp))
+                        }
+                        Spacer(Modifier.width(4.dp))
+                        IconButton(onClick = {
+                            val ts = java.text.SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", java.util.Locale.getDefault()).format(java.util.Date())
+                            onSaveFile("uid_$ts.txt", "UID: ${uiState.uid}")
+                        }, modifier = Modifier.size(24.dp)) {
+                            Icon(Icons.Default.Save, contentDescription = t("saveUid"), modifier = Modifier.size(16.dp))
+                        }
                     }
                 }
             }
@@ -641,6 +642,19 @@ fun SettingsSection(viewModel: FlasherViewModel) {
             SettingRow(t("readLineDelayMs"), Settings.readLineDelay.toString()) {
                 Settings.readLineDelay = it.toIntOrNull() ?: 1
             }
+
+            HorizontalDivider()
+            val context = androidx.compose.ui.platform.LocalContext.current
+            val versionName = try {
+                context.packageManager.getPackageInfo(context.packageName, 0).versionName
+            } catch (_: Exception) { "?" }
+            Text(
+                "v$versionName",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.Gray,
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
         }
     }
 }
