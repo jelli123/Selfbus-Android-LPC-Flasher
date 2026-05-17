@@ -1,6 +1,9 @@
 # Gradle files
 .gradle/
 build/
+/build/
+**/build/
+/app/release/
 
 # Local configuration file (sdk path, etc)
 local.properties
@@ -15,6 +18,8 @@ captures/
 .cxx/
 *.aab
 *.apk
+*.dm
+*.dm.gz
 output-metadata.json
 
 # IntelliJ
