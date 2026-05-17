@@ -643,7 +643,7 @@ fun SettingsSection(viewModel: FlasherViewModel) {
                 Settings.readLineDelay = it.toIntOrNull() ?: 1
             }
 
-            HorizontalDivider()
+            Divider()
             val context = androidx.compose.ui.platform.LocalContext.current
             val versionName = try {
                 context.packageManager.getPackageInfo(context.packageName, 0).versionName
