@@ -39,6 +39,7 @@ class FlasherViewModel(application: Application) : AndroidViewModel(application)
         val chipName: String? = null,
         val chipSpecs: String? = null,
         val uid: String? = null,
+        val knxSerial: String? = null,
         val firmwareFileName: String? = null,
         val firmwareSize: Int = 0,
         val progress: Int = -1, // -1 = hidden
@@ -74,11 +75,13 @@ class FlasherViewModel(application: Application) : AndroidViewModel(application)
         Logger.onChanged = { _logEntries.value = Logger.entries }
         flashOps.onProgress = { percent -> _uiState.value = _uiState.value.copy(progress = percent) }
         serial.onConnectionChanged = { connected, chip ->
+            val currentUid = if (connected) serial.detectedUid else _uiState.value.uid
             _uiState.value = _uiState.value.copy(
                 isConnected = connected,
                 chipName = chip?.name ?: _uiState.value.chipName,
                 chipSpecs = chip?.let { "${it.flashSize / 1024} KB Flash, ${it.ramSize / 1024} KB RAM" } ?: _uiState.value.chipSpecs,
-                uid = if (connected) serial.detectedUid else _uiState.value.uid
+                uid = currentUid,
+                knxSerial = currentUid?.let { MurmurHash3.knxSerialFromUid(it) } ?: _uiState.value.knxSerial
             )
         }
         refreshDeviceList()

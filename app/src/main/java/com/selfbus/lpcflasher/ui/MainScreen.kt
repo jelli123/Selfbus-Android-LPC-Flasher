@@ -156,6 +156,13 @@ fun ConnectionSection(
                         style = MaterialTheme.typography.bodySmall,
                         fontFamily = FontFamily.Monospace
                     )
+                    if (uiState.knxSerial != null) {
+                        Text(
+                            "KNX#: ${uiState.knxSerial}",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
                     Row {
                         Spacer(Modifier.weight(1f))
                         val clipboard = LocalClipboardManager.current
@@ -165,7 +172,7 @@ fun ConnectionSection(
                         Spacer(Modifier.width(4.dp))
                         IconButton(onClick = {
                             val ts = java.text.SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", java.util.Locale.getDefault()).format(java.util.Date())
-                            onSaveFile("uid_$ts.txt", "UID: ${uiState.uid}")
+                            onSaveFile("uid_$ts.txt", "UID: ${uiState.uid}\nKNX#: ${uiState.knxSerial ?: ""}")
                         }, modifier = Modifier.size(24.dp)) {
                             Icon(Icons.Default.Save, contentDescription = t("saveUid"), modifier = Modifier.size(16.dp))
                         }
