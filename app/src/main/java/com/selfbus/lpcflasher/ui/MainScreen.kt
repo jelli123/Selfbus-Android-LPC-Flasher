@@ -32,7 +32,8 @@ private fun plainLabel(text: String): String =
 fun MainScreen(
     viewModel: FlasherViewModel,
     onOpenFile: () -> Unit,
-    onSaveFile: (fileName: String, content: String) -> Unit
+    onSaveFile: (fileName: String, content: String) -> Unit,
+    onMenuClick: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val logEntries by viewModel.logEntries.collectAsState()
@@ -46,6 +47,11 @@ fun MainScreen(
         topBar = {
             TopAppBar(
                 title = { Text("LPC11xx Flasher") },
+                navigationIcon = {
+                    IconButton(onClick = onMenuClick) {
+                        Icon(Icons.Default.Menu, contentDescription = t("settings"))
+                    }
+                },
                 actions = {
                     // Language toggle
                     TextButton(onClick = {

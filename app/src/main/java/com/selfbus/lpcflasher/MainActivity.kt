@@ -15,7 +15,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import com.selfbus.lpcflasher.ui.FlasherViewModel
-import com.selfbus.lpcflasher.ui.MainScreen
+import com.selfbus.lpcflasher.ui.BusUpdaterViewModel
+import com.selfbus.lpcflasher.ui.AppRoot
 import com.selfbus.lpcflasher.ui.theme.LpcFlasherTheme
 
 class MainActivity : ComponentActivity() {
@@ -25,13 +26,21 @@ class MainActivity : ComponentActivity() {
     }
 
     private val viewModel: FlasherViewModel by viewModels()
+    private val busUpdaterViewModel: BusUpdaterViewModel by viewModels()
     private var pendingConnectDeviceId: Int? = null
 
-    // SAF file picker – open firmware file
+    // SAF file picker – open firmware file (LPC Flasher)
     private val openFileLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
         uri?.let { viewModel.loadFirmwareFile(it) }
+    }
+
+    // SAF file picker – open firmware file (KNX Bus-Updater)
+    private val openBusFileLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let { busUpdaterViewModel.loadFirmwareFile(it) }
     }
 
     // SAF file picker – save read-back / log
@@ -86,13 +95,15 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             LpcFlasherTheme {
-                MainScreen(
-                    viewModel = viewModel,
+                AppRoot(
+                    flasherViewModel = viewModel,
+                    busUpdaterViewModel = busUpdaterViewModel,
                     onOpenFile = { openFileLauncher.launch(arrayOf("*/*")) },
                     onSaveFile = { fileName, content ->
                         pendingSaveContent = content
                         saveFileLauncher.launch(fileName)
-                    }
+                    },
+                    onOpenBusFile = { openBusFileLauncher.launch(arrayOf("*/*")) }
                 )
             }
         }

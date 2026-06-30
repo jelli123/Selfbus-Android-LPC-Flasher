@@ -1,6 +1,8 @@
 # Android-LPC-Flasher
 
-Eine Android-App zum Lesen, Schreiben und Verwalten des Flash-Speichers von NXP LPC11xx Mikrocontrollern über einen USB-Seriell-Adapter (z. B. SBDAP).
+Eine Android-App zum Lesen, Schreiben und Verwalten des Flash-Speichers von NXP LPC11xx Mikrocontrollern über einen USB-Seriell-Adapter (z. B. SBDAP). Zusätzlich enthält die App einen **KNX Bus-Updater**, um Selfbus-Geräte über ein KNXnet/IP-Gateway (WLAN) zu flashen.
+
+Die beiden Funktionsbereiche sind über ein **Hamburger-Menü** (Navigation Drawer) erreichbar. Standardmäßig wird der **LPC Flasher (USB)** angezeigt.
 
 ## Funktionen
 
@@ -66,6 +68,17 @@ Eine Android-App zum Lesen, Schreiben und Verwalten des Flash-Speichers von NXP 
 - Debug-Log ein-/ausblendbar
 - Log in Zwischenablage kopieren oder als Datei speichern
 
+### KNX Bus-Updater (experimentell)
+- Flashen von Selfbus-Geräten über ein KNXnet/IP-Gateway (WLAN), ohne USB-Verbindung
+- Verbindung per Tunneling (calimero KNX-Stack); konfigurierbare Gateway-IP/Port, Geräte- und Eigenadresse
+- Auslesen der 16-Byte UID und Anzeige der KNX-Seriennummer
+- Entsperren des Geräts, Abfrage von Bootloader- und App-Version
+- Vollständiges Flashen (Vollflash-Modus) inkl. Boot-Deskriptor, optionales Löschen des Bereichs
+- Komplett-Löschen und Neustart des Geräts
+- Eigenes Protokoll-Log
+
+> **Hinweis:** Der KNX Bus-Updater ist eine Portierung des Selfbus `firmware_updater` und noch **nicht am echten Gerät getestet**. Es ist nur der Vollflash-Modus implementiert (kein Differenz-/Dekomprimierungs-Modus). Fehlerhafte Übertragungen können ein Gerät unbrauchbar machen – vor produktivem Einsatz unbedingt testen. Die Lauffähigkeit von calimero auf Android (API 26+) ist plausibel, aber unverifiziert.
+
 ## Unterstützte Hardware
 
 ### USB-Seriell-Adapter
@@ -85,7 +98,8 @@ Eine Android-App zum Lesen, Schreiben und Verwalten des Flash-Speichers von NXP 
 
 ## Systemanforderungen
 - Android 8.0 (API 26) oder höher
-- USB-Host-Unterstützung (USB OTG)
+- USB-Host-Unterstützung (USB OTG) für den LPC Flasher
+- WLAN mit erreichbarem KNXnet/IP-Gateway für den Bus-Updater
 - Internetverbindung für den Firmware-Katalog (optional)
 
 ## Lizenz

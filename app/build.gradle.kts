@@ -28,6 +28,7 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        isCoreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
@@ -70,4 +71,13 @@ dependencies {
 
     // USB Serial
     implementation("com.github.mik3y:usb-serial-for-android:3.7.3")
+
+    // KNX stack for the Bus-Updater (KNXnet/IP). Package: tuwien.auto.calimero
+    implementation("com.github.calimero:calimero-core:2.5")
+    // SLF4J binding for Android (calimero logs via SLF4J)
+    implementation("org.slf4j:slf4j-api:1.7.36")
+    implementation("uk.uuid.slf4j:slf4j-android:1.7.30-0")
+
+    // Java 8+ API desugaring (java.time, java.util.zip used by KNX layer)
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
 }
