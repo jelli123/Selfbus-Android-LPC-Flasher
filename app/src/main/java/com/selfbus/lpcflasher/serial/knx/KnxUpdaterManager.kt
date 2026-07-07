@@ -5,8 +5,9 @@ import tuwien.auto.calimero.Priority
 import tuwien.auto.calimero.DataUnitBuilder
 import tuwien.auto.calimero.FrameEvent
 import tuwien.auto.calimero.DetachEvent
+import tuwien.auto.calimero.CloseEvent
 import tuwien.auto.calimero.cemi.CEMILData
-import tuwien.auto.calimero.knxnetip.KNXNetworkLinkIP
+import tuwien.auto.calimero.link.KNXNetworkLinkIP
 import tuwien.auto.calimero.link.KNXNetworkLink
 import tuwien.auto.calimero.link.medium.TPSettings
 import tuwien.auto.calimero.mgmt.Destination
@@ -71,6 +72,7 @@ class KnxUpdaterManager(
         override fun group(e: FrameEvent) { /* ignore */ }
         override fun disconnected(d: Destination) { log("KNX: Verbindung getrennt (${d.address})") }
         override fun detached(e: DetachEvent) { /* ignore */ }
+        override fun linkClosed(e: CloseEvent) { log("KNX: Link geschlossen") }
     }
 
     private fun onFrame(e: FrameEvent) {
@@ -150,7 +152,7 @@ class KnxUpdaterManager(
         val asdu = ByteArray(1 + data.size)
         asdu[0] = command.byte
         System.arraycopy(data, 0, asdu, 1, data.size)
-        val apdu = DataUnitBuilder.createAPDU(APCI_USERMSG_WRITE, asdu)
+        val apdu = DataUnitBuilder.createAPDU(APCI_USERMSG_WRITE, *asdu)
         try {
             tl.sendData(dst, Priority.SYSTEM, apdu)
         } catch (ex: Exception) {
@@ -256,7 +258,7 @@ class KnxUpdaterManager(
             val tl = transport ?: return
             val dst = destination ?: return
             // A_Restart (basic) — APCI 0x0380, no ASDU
-            val apdu = DataUnitBuilder.createAPDU(0x0380, ByteArray(0))
+            val apdu = DataUnitBuilder.createAPDU(0x0380, *byteArrayOf())
             tl.sendData(dst, Priority.SYSTEM, apdu)
             log("KNX: Neustart-Befehl gesendet")
         } catch (ex: Exception) {
