@@ -4,6 +4,7 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.selfbus.lpcflasher.data.FirmwareCatalog
 import com.selfbus.lpcflasher.data.HexParser
 import com.selfbus.lpcflasher.data.MurmurHash3
 import com.selfbus.lpcflasher.serial.knx.KnxUpdaterManager
@@ -24,7 +25,7 @@ import java.util.Locale
 class BusUpdaterViewModel(application: Application) : AndroidViewModel(application) {
 
     /** How the device to be programmed is identified. */
-    enum class DeviceSearchMode { PROG_BUTTON, SERIAL, MANUAL }
+    enum class DeviceSearchMode { PROG_BUTTON, SERIAL, DEVICE_ADDRESS, MANUAL }
 
     data class UiState(
         val gatewayIp: String = "",
@@ -41,11 +42,22 @@ class BusUpdaterViewModel(application: Application) : AndroidViewModel(applicati
         // Device search
         val deviceSearchMode: DeviceSearchMode = DeviceSearchMode.PROG_BUTTON,
         val knxSerialInput: String = "",
+        val deviceAddressInput: String = "1.1.1",
+        val uidInput: String = "",
         val foundDeviceAddress: String? = null,
 
         val firmwareFileName: String? = null,
         val firmwareSize: Int = 0,
         val firmwareStartAddress: Int = 0,
+
+        // Firmware catalog (only bootloader-based "flashstart" versions)
+        val categories: List<Pair<String, FirmwareCatalog.Category>> = emptyList(),
+        val selectedCategory: String? = null,
+        val devices: List<Pair<String, FirmwareCatalog.Device>> = emptyList(),
+        val selectedDevice: String? = null,
+        val firmwareVariants: List<FirmwareCatalog.FirmwareFile> = emptyList(),
+        val selectedVariant: FirmwareCatalog.FirmwareFile? = null,
+        val isLoadingVariants: Boolean = false,
 
         val uid: String? = null,
         val knxSerial: String? = null,
@@ -70,6 +82,10 @@ class BusUpdaterViewModel(application: Application) : AndroidViewModel(applicati
     /** Flattened firmware image, plus its start address. */
     private var firmware: ByteArray = ByteArray(0)
 
+    init {
+        initCatalog()
+    }
+
     private fun appendLog(message: String) {
         val line = "[${timeFmt.format(Date())}] $message"
         _log.value = (_log.value + line).takeLast(500)
@@ -87,6 +103,8 @@ class BusUpdaterViewModel(application: Application) : AndroidViewModel(applicati
     fun setEraseBeforeFlash(v: Boolean) { _uiState.value = _uiState.value.copy(eraseBeforeFlash = v) }
     fun setDeviceSearchMode(mode: DeviceSearchMode) { _uiState.value = _uiState.value.copy(deviceSearchMode = mode) }
     fun setKnxSerialInput(v: String) { _uiState.value = _uiState.value.copy(knxSerialInput = v) }
+    fun setDeviceAddressInput(v: String) { _uiState.value = _uiState.value.copy(deviceAddressInput = v) }
+    fun setUidInput(v: String) { _uiState.value = _uiState.value.copy(uidInput = v) }
 
     // ---- Firmware loading ----
     fun loadFirmwareFile(uri: Uri) {
@@ -188,7 +206,10 @@ class BusUpdaterViewModel(application: Application) : AndroidViewModel(applicati
                 appendLog("KNX: Programmiergerät = $address")
 
                 manager.openDevice(address)
-                val uid = manager.readUid()
+                // Prefer a manually entered UID for unlocking; otherwise read it
+                // from the bootloader (mirrors the Java updater's --uid option).
+                val manualUid = parseUid(s.uidInput)
+                val uid = manualUid ?: manager.readUid()
                 val uidStr = uid.joinToString(":") { "%02X".format(it) }
                 manager.unlock(uid)
                 val bl = try { manager.requestBootloaderIdentity() } catch (_: Exception) { null }
@@ -242,7 +263,14 @@ class BusUpdaterViewModel(application: Application) : AndroidViewModel(applicati
         )
     }
 
-    /** Determine the device address from the selected search mode. */
+    /**
+     * Determine the address of the device to program, based on the selected mode.
+     *
+     * For [DeviceSearchMode.SERIAL] and [DeviceSearchMode.DEVICE_ADDRESS] the
+     * device is running its normal application, so it is first restarted into
+     * the bootloader (programming mode) and afterwards answers on the fixed
+     * bootloader address.
+     */
     private fun resolveDeviceAddress(s: UiState): String {
         return when (s.deviceSearchMode) {
             DeviceSearchMode.PROG_BUTTON -> {
@@ -264,14 +292,25 @@ class BusUpdaterViewModel(application: Application) : AndroidViewModel(applicati
                     ?: throw KnxUpdaterManager.KnxUpdaterException(
                         "Ungültige KNX-Seriennummer (Format: 013A:XXXXXXXX)"
                     )
-                manager.findDeviceBySerial(serial)
+                // The bootloader itself does not answer to serial-number addressing,
+                // so this finds the running device; then restart it into the bootloader.
+                val running = manager.findDeviceBySerial(serial)
                     ?: throw KnxUpdaterManager.KnxUpdaterException(
-                        "Kein Gerät mit dieser Seriennummer gefunden"
+                        "Kein Gerät mit dieser Seriennummer gefunden (läuft es in normaler Applikation?)"
                     )
+                manager.restartDeviceToBootloader(running)
+                KnxUpdaterManager.BOOTLOADER_ADDRESS
+            }
+            DeviceSearchMode.DEVICE_ADDRESS -> {
+                val addr = s.deviceAddressInput.trim()
+                if (addr.isBlank())
+                    throw KnxUpdaterManager.KnxUpdaterException("Bitte Geräteadresse eingeben")
+                manager.restartDeviceToBootloader(addr)
+                KnxUpdaterManager.BOOTLOADER_ADDRESS
             }
             DeviceSearchMode.MANUAL -> {
                 if (s.progAddress.isBlank())
-                    throw KnxUpdaterManager.KnxUpdaterException("Bitte Geräteadresse eingeben")
+                    throw KnxUpdaterManager.KnxUpdaterException("Bitte Bootloader-Adresse eingeben")
                 s.progAddress.trim()
             }
         }
@@ -279,10 +318,21 @@ class BusUpdaterViewModel(application: Application) : AndroidViewModel(applicati
 
     /** Parse a KNX serial like "013A:1A2B3C4D" (or without colon) into 6 bytes. */
     private fun parseKnxSerial(input: String): ByteArray? {
-        val hex = input.filter { it.isLetterOrDigit() }.filter { it.lowercaseChar() in "0123456789abcdef" }
+        val hex = input.filter { it.lowercaseChar() in "0123456789abcdef" }
         if (hex.length != 12) return null
         return try {
             ByteArray(6) { i -> hex.substring(i * 2, i * 2 + 2).toInt(16).toByte() }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** Parse an optional UID (colon or plain hex, 12..16 bytes) for unlocking; null if empty/invalid. */
+    private fun parseUid(input: String): ByteArray? {
+        val hex = input.filter { it.lowercaseChar() in "0123456789abcdef" }
+        if (hex.length < 24 || hex.length % 2 != 0) return null
+        return try {
+            ByteArray(hex.length / 2) { i -> hex.substring(i * 2, i * 2 + 2).toInt(16).toByte() }
         } catch (_: Exception) {
             null
         }
@@ -303,19 +353,124 @@ class BusUpdaterViewModel(application: Application) : AndroidViewModel(applicati
         }
         val s = _uiState.value
         runBusy {
-            manager.flashFirmware(
-                firmware = firmware,
-                startAddress = s.firmwareStartAddress,
-                eraseRange = s.eraseBeforeFlash
-            ) { p ->
-                _uiState.value = _uiState.value.copy(progress = (p * 100).toInt())
+            // Auto-retry on abort: a partially flashed device must NOT be reset
+            // (it could otherwise only be reprogrammed after physical removal),
+            // so we retry the whole flash immediately without restarting it.
+            val maxAttempts = 3
+            var lastError: Exception? = null
+            for (attempt in 1..maxAttempts) {
+                try {
+                    if (attempt > 1) appendLog("KNX: Flash-Wiederholung $attempt/$maxAttempts ...")
+                    manager.flashFirmware(
+                        firmware = firmware,
+                        startAddress = s.firmwareStartAddress,
+                        eraseRange = s.eraseBeforeFlash
+                    ) { p ->
+                        _uiState.value = _uiState.value.copy(progress = (p * 100).toInt())
+                    }
+                    // Only restart into the application after a successful flash.
+                    manager.restartDevice()
+                    lastError = null
+                    break
+                } catch (ex: Exception) {
+                    lastError = ex
+                    appendLog("KNX: Flash-Versuch $attempt fehlgeschlagen: ${ex.message}")
+                    if (attempt < maxAttempts) {
+                        appendLog("KNX: Sofortiger neuer Versuch – Gerät wird NICHT zurückgesetzt")
+                    }
+                }
             }
-            manager.restartDevice()
+            if (lastError != null) {
+                appendLog("KNX: Flashen endgültig fehlgeschlagen. Gerät im Bootloader lassen und erneut versuchen!")
+                throw lastError
+            }
         }
     }
 
     fun restartDevice() {
         runBusy { manager.restartDevice() }
+    }
+
+    // ---------------------------------------------------------------------
+    // Firmware catalog (only bootloader-based "flashstart" versions)
+    // ---------------------------------------------------------------------
+
+    private fun initCatalog() {
+        viewModelScope.launch(Dispatchers.IO) {
+            FirmwareCatalog.loadFirmwareMapping()
+            val cats = FirmwareCatalog.getSortedCategories()
+            withContext(Dispatchers.Main) {
+                _uiState.value = _uiState.value.copy(categories = cats)
+            }
+            FirmwareCatalog.loadJsdelivrFileList()
+        }
+    }
+
+    fun selectCategory(categoryKey: String?) {
+        _uiState.value = _uiState.value.copy(
+            selectedCategory = categoryKey,
+            devices = if (categoryKey != null) FirmwareCatalog.getDevicesForCategory(categoryKey, "de") else emptyList(),
+            selectedDevice = null,
+            firmwareVariants = emptyList(),
+            selectedVariant = null
+        )
+    }
+
+    fun selectDevice(deviceId: String?) {
+        _uiState.value = _uiState.value.copy(
+            selectedDevice = deviceId,
+            firmwareVariants = emptyList(),
+            selectedVariant = null,
+            isLoadingVariants = deviceId != null
+        )
+        if (deviceId == null) return
+        viewModelScope.launch(Dispatchers.IO) {
+            // Only the "flashstart" variants build on the bootloader and are usable
+            // by the Bus-Updater; the full/standalone images are filtered out.
+            val files = FirmwareCatalog.loadFirmwareFilesForDevice(deviceId)
+                .filter { it.name.lowercase().contains("flashstart") }
+                .sortedByDescending { it.name }
+            withContext(Dispatchers.Main) {
+                _uiState.value = _uiState.value.copy(
+                    firmwareVariants = files,
+                    isLoadingVariants = false
+                )
+            }
+        }
+    }
+
+    fun selectVariant(variant: FirmwareCatalog.FirmwareFile?) {
+        firmware = ByteArray(0)
+        _uiState.value = _uiState.value.copy(
+            selectedVariant = variant,
+            firmwareFileName = variant?.let { "${it.name} (ausgewählt, noch nicht geladen)" },
+            firmwareSize = 0
+        )
+    }
+
+    fun loadSelectedCatalogFirmware() {
+        val variant = _uiState.value.selectedVariant ?: return
+        if (_uiState.value.isBusy) return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isBusy = true)
+            try {
+                val (start, bytes) = withContext(Dispatchers.IO) {
+                    val content = FirmwareCatalog.downloadFirmwareFromGitHub(variant.path, variant.name)
+                    flatten(HexParser.parseIntelHex(content))
+                }
+                firmware = bytes
+                _uiState.value = _uiState.value.copy(
+                    firmwareFileName = "${variant.name} (GitHub)",
+                    firmwareSize = bytes.size,
+                    firmwareStartAddress = start
+                )
+                appendLog("Firmware geladen: ${variant.name} (${bytes.size} Bytes ab 0x%X)".format(start))
+            } catch (ex: Exception) {
+                appendLog("Fehler beim Laden der Firmware: ${ex.message}")
+            } finally {
+                _uiState.value = _uiState.value.copy(isBusy = false)
+            }
+        }
     }
 
     override fun onCleared() {

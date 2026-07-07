@@ -15,8 +15,9 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.selfbus.lpcflasher.data.FirmwareCatalog
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun BusUpdaterScreen(
     viewModel: BusUpdaterViewModel,
@@ -128,7 +129,7 @@ fun BusUpdaterScreen(
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Zu programmierendes Gerät", style = MaterialTheme.typography.titleMedium)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(
                             selected = uiState.deviceSearchMode == BusUpdaterViewModel.DeviceSearchMode.PROG_BUTTON,
                             onClick = { viewModel.setDeviceSearchMode(BusUpdaterViewModel.DeviceSearchMode.PROG_BUTTON) },
@@ -139,6 +140,12 @@ fun BusUpdaterScreen(
                             selected = uiState.deviceSearchMode == BusUpdaterViewModel.DeviceSearchMode.SERIAL,
                             onClick = { viewModel.setDeviceSearchMode(BusUpdaterViewModel.DeviceSearchMode.SERIAL) },
                             label = { Text("Seriennr.") },
+                            enabled = !uiState.isBusy && !uiState.isConnected
+                        )
+                        FilterChip(
+                            selected = uiState.deviceSearchMode == BusUpdaterViewModel.DeviceSearchMode.DEVICE_ADDRESS,
+                            onClick = { viewModel.setDeviceSearchMode(BusUpdaterViewModel.DeviceSearchMode.DEVICE_ADDRESS) },
+                            label = { Text("Geräteadresse") },
                             enabled = !uiState.isBusy && !uiState.isConnected
                         )
                         FilterChip(
@@ -165,18 +172,46 @@ fun BusUpdaterScreen(
                                 enabled = !uiState.isBusy && !uiState.isConnected,
                                 modifier = Modifier.fillMaxWidth()
                             )
+                            Text(
+                                "Findet das laufende Gerät und startet es in den Bootloader. " +
+                                    "Hinweis: Der Bootloader selbst antwortet ggf. nicht auf die Seriennummer.",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        BusUpdaterViewModel.DeviceSearchMode.DEVICE_ADDRESS -> {
+                            OutlinedTextField(
+                                value = uiState.deviceAddressInput,
+                                onValueChange = viewModel::setDeviceAddressInput,
+                                label = { Text("Geräteadresse (Normalbetrieb, z. B. 1.1.5)") },
+                                singleLine = true,
+                                enabled = !uiState.isBusy && !uiState.isConnected,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Text(
+                                "Startet das Gerät über die KNX-Adresse in den Bootloader (Programmiermodus).",
+                                style = MaterialTheme.typography.bodySmall
+                            )
                         }
                         BusUpdaterViewModel.DeviceSearchMode.MANUAL -> {
                             OutlinedTextField(
                                 value = uiState.progAddress,
                                 onValueChange = viewModel::setProgAddress,
-                                label = { Text("Geräteadresse (z. B. 15.15.192)") },
+                                label = { Text("Bootloader-Adresse (z. B. 15.15.192)") },
                                 singleLine = true,
                                 enabled = !uiState.isBusy && !uiState.isConnected,
                                 modifier = Modifier.fillMaxWidth()
                             )
                         }
                     }
+                    OutlinedTextField(
+                        value = uiState.uidInput,
+                        onValueChange = viewModel::setUidInput,
+                        label = { Text("UID zum Entsperren (optional)") },
+                        placeholder = { Text("leer = automatisch vom Bootloader lesen") },
+                        singleLine = true,
+                        enabled = !uiState.isBusy && !uiState.isConnected,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                     uiState.foundDeviceAddress?.let {
                         Text("Gefunden: $it", fontFamily = FontFamily.Monospace, fontSize = 13.sp)
                     }
@@ -220,6 +255,12 @@ fun BusUpdaterScreen(
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Firmware", style = MaterialTheme.typography.titleMedium)
+
+                    // Firmware catalog (only bootloader-based "flashstart" versions)
+                    BusUpdaterCatalog(uiState, viewModel)
+
+                    Divider()
+
                     uiState.firmwareFileName?.let {
                         Text(
                             "$it (${uiState.firmwareSize} Bytes ab 0x%X)".format(uiState.firmwareStartAddress),
@@ -230,7 +271,7 @@ fun BusUpdaterScreen(
                         onClick = onOpenFile,
                         enabled = !uiState.isBusy,
                         modifier = Modifier.fillMaxWidth()
-                    ) { Text("Firmware-Datei wählen (.hex / .bin)") }
+                    ) { Text("Eigene Datei wählen (.hex / .bin)") }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(
                             checked = uiState.eraseBeforeFlash,
@@ -309,6 +350,113 @@ fun BusUpdaterScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error
             )
+        }
+    }
+}
+
+/**
+ * Firmware catalog selector for the Bus-Updater. Reuses the shared
+ * [FirmwareCatalog] but only offers the bootloader-based "flashstart" variants.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun BusUpdaterCatalog(
+    uiState: BusUpdaterViewModel.UiState,
+    viewModel: BusUpdaterViewModel
+) {
+    val enabled = !uiState.isBusy && !uiState.isConnected
+
+    // Category
+    var catExpanded by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(expanded = catExpanded, onExpandedChange = { if (enabled) catExpanded = it }) {
+        OutlinedTextField(
+            value = uiState.selectedCategory?.let { key ->
+                uiState.categories.find { it.first == key }?.let { (_, cat) ->
+                    "${cat.icon} ${cat.name["de"] ?: cat.name["en"] ?: key}"
+                }
+            } ?: "Kategorie wählen",
+            onValueChange = {},
+            readOnly = true,
+            enabled = enabled,
+            label = { Text("Kategorie") },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = catExpanded) },
+            modifier = Modifier.menuAnchor().fillMaxWidth()
+        )
+        ExposedDropdownMenu(expanded = catExpanded, onDismissRequest = { catExpanded = false }) {
+            uiState.categories.forEach { (key, cat) ->
+                DropdownMenuItem(
+                    text = { Text("${cat.icon} ${cat.name["de"] ?: cat.name["en"] ?: key}") },
+                    onClick = { viewModel.selectCategory(key); catExpanded = false }
+                )
+            }
+        }
+    }
+
+    // Device
+    if (uiState.devices.isNotEmpty()) {
+        var devExpanded by remember { mutableStateOf(false) }
+        ExposedDropdownMenuBox(expanded = devExpanded, onExpandedChange = { if (enabled) devExpanded = it }) {
+            OutlinedTextField(
+                value = uiState.selectedDevice?.let { id ->
+                    uiState.devices.find { it.first == id }?.let { (_, dev) ->
+                        dev.name["de"] ?: dev.name["en"] ?: id
+                    }
+                } ?: "Gerät wählen",
+                onValueChange = {},
+                readOnly = true,
+                enabled = enabled,
+                label = { Text("Gerät") },
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = devExpanded) },
+                modifier = Modifier.menuAnchor().fillMaxWidth()
+            )
+            ExposedDropdownMenu(expanded = devExpanded, onDismissRequest = { devExpanded = false }) {
+                uiState.devices.forEach { (id, dev) ->
+                    DropdownMenuItem(
+                        text = { Text(dev.name["de"] ?: dev.name["en"] ?: id) },
+                        onClick = { viewModel.selectDevice(id); devExpanded = false }
+                    )
+                }
+            }
+        }
+    }
+
+    // Firmware variant (flashstart only)
+    if (uiState.isLoadingVariants) {
+        Text("⏳ Lade Firmware-Versionen ...", style = MaterialTheme.typography.bodySmall)
+    } else if (uiState.selectedDevice != null) {
+        if (uiState.firmwareVariants.isEmpty()) {
+            Text(
+                "Keine Flashstart-Version für dieses Gerät verfügbar.",
+                style = MaterialTheme.typography.bodySmall
+            )
+        } else {
+            var varExpanded by remember { mutableStateOf(false) }
+            ExposedDropdownMenuBox(expanded = varExpanded, onExpandedChange = { if (enabled) varExpanded = it }) {
+                OutlinedTextField(
+                    value = uiState.selectedVariant?.let {
+                        FirmwareCatalog.formatFirmwareName(it.name, it.hints)
+                    } ?: "Firmware wählen",
+                    onValueChange = {},
+                    readOnly = true,
+                    enabled = enabled,
+                    label = { Text("Firmware (Flashstart)") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = varExpanded) },
+                    modifier = Modifier.menuAnchor().fillMaxWidth()
+                )
+                ExposedDropdownMenu(expanded = varExpanded, onDismissRequest = { varExpanded = false }) {
+                    uiState.firmwareVariants.forEach { file ->
+                        DropdownMenuItem(
+                            text = { Text(FirmwareCatalog.formatFirmwareName(file.name, file.hints)) },
+                            onClick = { viewModel.selectVariant(file); varExpanded = false }
+                        )
+                    }
+                }
+            }
+            Button(
+                onClick = { viewModel.loadSelectedCatalogFirmware() },
+                enabled = uiState.selectedVariant != null && !uiState.isBusy,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Firmware laden") }
         }
     }
 }

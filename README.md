@@ -71,13 +71,17 @@ Die beiden Funktionsbereiche sind über ein **Hamburger-Menü** (Navigation Draw
 ### KNX Bus-Updater (experimentell)
 - Flashen von Selfbus-Geräten über ein KNXnet/IP-Gateway (WLAN), ohne USB-Verbindung
 - **Automatische Gateway-Erkennung** per KNXnet/IP-Multicast-Suche (224.0.23.12); gefundene Gateways werden mit direkter IP/Port zur Auswahl angeboten (Mehrfachauswahl möglich), alternativ manuelle Eingabe
-- **Automatische Geräteerkennung** des zu programmierenden Geräts wahlweise über den gedrückten Programmierknopf (Programmiermodus) oder über die KNX-Seriennummer (Format `013A:XXXXXXXX`); alternativ manuelle Geräteadresse
-- Verbindung per Tunneling (calimero KNX-Stack); konfigurierbare Gateway-IP/Port und eigene KNX-Adresse
-- Auslesen der 16-Byte UID und Anzeige der KNX-Seriennummer
-- Entsperren des Geräts, Abfrage von Bootloader- und App-Version
+- **Automatische Geräteerkennung** des zu programmierenden Geräts:
+  - über den gedrückten **Programmierknopf** (Gerät bereits im Bootloader)
+  - über die **KNX-Seriennummer** (Format `013A:XXXXXXXX`) – findet das laufende Gerät und startet es in den Bootloader
+  - über die **KNX-Geräteadresse** (Normalbetrieb) – startet das Gerät per Master-Reset in den Bootloader (Programmiermodus)
+  - **manuelle** Bootloader-Adresse
+- **UID zum Entsperren** optional eingebbar (sonst wird die UID automatisch vom Bootloader gelesen)
+- **Firmware-Katalog** analog zum LPC-Flasher, jedoch ausschließlich die auf dem Bootloader aufbauenden **Flashstart-Versionen** (Kategorie → Gerät → Firmware); alternativ eigene `.hex`/`.bin`-Datei
+- Auslesen der 16-Byte UID und Anzeige der KNX-Seriennummer, Bootloader- und App-Version
 - Vollständiges Flashen (Vollflash-Modus) inkl. Boot-Deskriptor, optionales Löschen des Bereichs
-- Komplett-Löschen und Neustart des Geräts
-- Eigenes Protokoll-Log
+- **Automatischer Sofort-Wiederholversuch bei Flash-Abbruch** – das Gerät wird bei einem Fehler bewusst **nicht** zurückgesetzt, da ein teilprogrammiertes Gerät nach einem Reset nur noch durch Ausbau programmierbar wäre
+- Komplett-Löschen und Neustart des Geräts, eigenes Protokoll-Log
 
 > **Hinweis:** Der KNX Bus-Updater ist eine Portierung des Selfbus `firmware_updater` und noch **nicht am echten Gerät getestet**. Es ist nur der Vollflash-Modus implementiert (kein Differenz-/Dekomprimierungs-Modus). Fehlerhafte Übertragungen können ein Gerät unbrauchbar machen – vor produktivem Einsatz unbedingt testen. Die Lauffähigkeit von calimero auf Android (API 26+) ist plausibel, aber unverifiziert.
 

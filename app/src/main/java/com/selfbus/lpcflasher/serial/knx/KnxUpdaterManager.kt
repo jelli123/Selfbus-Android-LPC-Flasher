@@ -54,6 +54,19 @@ class KnxUpdaterManager(
         private const val BLOCK_SIZE = Mcu.UPD_PROGRAM_SIZE   // 1024 (V1)
         private const val MAX_PAYLOAD = Mcu.MAX_PAYLOAD       // 13
 
+        /** Maximum retries for a single UPD command (mirrors the Java updater). */
+        private const val MAX_UPD_RETRY = 3
+
+        /** Master-reset erase code / channel used to restart a device into the bootloader. */
+        private const val RESTART_ERASE_CODE = 7
+        private const val RESTART_CHANNEL = 255
+
+        /** Default seconds to wait for a device to restart into the bootloader. */
+        private const val DEFAULT_RESTART_TIME_SECONDS = 6
+
+        /** Fixed KNX address the Selfbus bootloader uses in programming mode. */
+        const val BOOTLOADER_ADDRESS = "15.15.192"
+
         /** Magic marker preceding the application-version pointer inside firmware. */
         private val APP_VER_PTR_MAGIC = byteArrayOf(
             '!'.code.toByte(), 'A'.code.toByte(), 'V'.code.toByte(), 'P'.code.toByte(),
@@ -235,6 +248,38 @@ class KnxUpdaterManager(
         }
     }
 
+    /**
+     * Restart a device that is running its normal application into the bootloader
+     * (programming mode). Requires the device's current individual address.
+     *
+     * This mirrors the Selfbus updater's `restartDeviceToBootloader` (KNX master
+     * reset, erase code 7 / channel 255). After the restart the device answers on
+     * the fixed bootloader address [BOOTLOADER_ADDRESS].
+     */
+    fun restartDeviceToBootloader(deviceAddress: String) {
+        val currentLink = link ?: throw KnxUpdaterException("Kein Gateway verbunden")
+        log("KNX: Starte Gerät $deviceAddress in den Bootloader ...")
+        val mc = ManagementClientImpl(currentLink)
+        val dst = mc.createDestination(IndividualAddress(deviceAddress), true)
+        var waitSeconds = DEFAULT_RESTART_TIME_SECONDS
+        try {
+            val reported = mc.restart(dst, RESTART_ERASE_CODE, RESTART_CHANNEL)
+            if (reported > 0) waitSeconds = reported
+        } catch (ex: Exception) {
+            // A master reset may not be acknowledged before the device restarts;
+            // this is not necessarily an error. Continue and wait.
+            log("KNX: Neustart-Rückmeldung unklar (${ex.message}) – warte trotzdem")
+        } finally {
+            runCatching { mc.detach() }
+        }
+        try {
+            Thread.sleep(waitSeconds * 1000L)
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
+        log("KNX: Gerät sollte nun im Bootloader-Modus sein ($BOOTLOADER_ADDRESS)")
+    }
+
     fun disconnect() {
         try {
             destination?.let { transport?.disconnect(it) }
@@ -259,8 +304,8 @@ class KnxUpdaterManager(
     // Low level UPD telegram exchange
     // ---------------------------------------------------------------------
 
-    /** Send a UPD telegram and wait for the matching response ASDU. */
-    private fun sendUpd(command: UpdCommand, data: ByteArray, timeoutMs: Long): ByteArray {
+    /** Send a UPD telegram once and wait for the matching response ASDU. */
+    private fun sendUpdOnce(command: UpdCommand, data: ByteArray, timeoutMs: Long): ByteArray {
         val tl = transport ?: throw KnxUpdaterException("Nicht verbunden")
         val dst = destination ?: throw KnxUpdaterException("Nicht verbunden")
         responses.clear()
@@ -268,14 +313,28 @@ class KnxUpdaterManager(
         asdu[0] = command.byte
         System.arraycopy(data, 0, asdu, 1, data.size)
         val apdu = DataUnitBuilder.createAPDU(APCI_USERMSG_WRITE, asdu)
-        try {
-            tl.sendData(dst, Priority.SYSTEM, apdu)
-        } catch (ex: Exception) {
-            throw KnxUpdaterException("Senden von ${command.name} fehlgeschlagen: ${ex.message}")
-        }
-        val response = responses.poll(timeoutMs, TimeUnit.MILLISECONDS)
+        tl.sendData(dst, Priority.SYSTEM, apdu)
+        return responses.poll(timeoutMs, TimeUnit.MILLISECONDS)
             ?: throw KnxUpdaterException("Keine Antwort auf ${command.name} (Timeout)")
-        return response
+    }
+
+    /**
+     * Send a UPD telegram, retrying on transient failures (timeout / send error).
+     * Mirrors the Java updater's `sendWithRetry` (MAX_UPD_RETRY attempts).
+     */
+    private fun sendUpd(command: UpdCommand, data: ByteArray, timeoutMs: Long): ByteArray {
+        var lastError: Exception? = null
+        for (attempt in 1..MAX_UPD_RETRY) {
+            try {
+                return sendUpdOnce(command, data, timeoutMs)
+            } catch (ex: Exception) {
+                lastError = ex
+                if (attempt < MAX_UPD_RETRY) {
+                    log("KNX: ${command.name} Versuch $attempt fehlgeschlagen (${ex.message}) – wiederhole")
+                }
+            }
+        }
+        throw KnxUpdaterException("${command.name} fehlgeschlagen: ${lastError?.message}")
     }
 
     /**
@@ -387,6 +446,12 @@ class KnxUpdaterManager(
 
     /**
      * Flash [firmware] starting at [startAddress] using full-flash mode.
+     *
+     * On any failure this throws and leaves the device **in the bootloader**
+     * (it is intentionally NOT restarted). This is important: after a reset a
+     * partially flashed device can no longer be programmed over the bus without
+     * physically removing it, so the caller should retry immediately instead.
+     *
      * @param eraseRange erase the affected address range before programming.
      * @param progress 0f..1f progress callback.
      */
