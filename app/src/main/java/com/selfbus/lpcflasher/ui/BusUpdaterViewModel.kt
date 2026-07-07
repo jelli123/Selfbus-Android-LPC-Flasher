@@ -23,12 +23,25 @@ import java.util.Locale
  */
 class BusUpdaterViewModel(application: Application) : AndroidViewModel(application) {
 
+    /** How the device to be programmed is identified. */
+    enum class DeviceSearchMode { PROG_BUTTON, SERIAL, MANUAL }
+
     data class UiState(
         val gatewayIp: String = "",
         val gatewayPort: String = "3671",
         val ownAddress: String = "15.15.250",
         val progAddress: String = "15.15.192",
         val eraseBeforeFlash: Boolean = true,
+
+        // Gateway discovery
+        val discoveredGateways: List<KnxUpdaterManager.GatewayInfo> = emptyList(),
+        val selectedGatewayIndex: Int = -1,
+        val isDiscovering: Boolean = false,
+
+        // Device search
+        val deviceSearchMode: DeviceSearchMode = DeviceSearchMode.PROG_BUTTON,
+        val knxSerialInput: String = "",
+        val foundDeviceAddress: String? = null,
 
         val firmwareFileName: String? = null,
         val firmwareSize: Int = 0,
@@ -52,7 +65,7 @@ class BusUpdaterViewModel(application: Application) : AndroidViewModel(applicati
 
     private val timeFmt = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
 
-    private val manager = KnxUpdaterManager(::appendLog)
+    private val manager = KnxUpdaterManager(application, ::appendLog)
 
     /** Flattened firmware image, plus its start address. */
     private var firmware: ByteArray = ByteArray(0)
@@ -72,6 +85,8 @@ class BusUpdaterViewModel(application: Application) : AndroidViewModel(applicati
     fun setOwnAddress(v: String) { _uiState.value = _uiState.value.copy(ownAddress = v) }
     fun setProgAddress(v: String) { _uiState.value = _uiState.value.copy(progAddress = v) }
     fun setEraseBeforeFlash(v: Boolean) { _uiState.value = _uiState.value.copy(eraseBeforeFlash = v) }
+    fun setDeviceSearchMode(mode: DeviceSearchMode) { _uiState.value = _uiState.value.copy(deviceSearchMode = mode) }
+    fun setKnxSerialInput(v: String) { _uiState.value = _uiState.value.copy(knxSerialInput = v) }
 
     // ---- Firmware loading ----
     fun loadFirmwareFile(uri: Uri) {
@@ -158,25 +173,118 @@ class BusUpdaterViewModel(application: Application) : AndroidViewModel(applicati
     fun connectAndIdentify() {
         val s = _uiState.value
         if (s.gatewayIp.isBlank()) {
-            appendLog("Bitte Gateway-IP eingeben")
+            appendLog("Bitte Gateway wählen oder IP eingeben")
             return
         }
         runBusy {
-            val port = s.gatewayPort.toIntOrNull() ?: 3671
-            manager.connect(s.gatewayIp.trim(), port, s.ownAddress.trim(), s.progAddress.trim())
-            val uid = manager.readUid()
-            val uidStr = uid.joinToString(":") { "%02X".format(it) }
-            manager.unlock(uid)
-            val bl = try { manager.requestBootloaderIdentity() } catch (_: Exception) { null }
-            val appVer = try { manager.requestAppVersion() } catch (_: Exception) { null }
-            withContext(Dispatchers.Main) {
-                _uiState.value = _uiState.value.copy(
-                    uid = uidStr,
-                    knxSerial = MurmurHash3.knxSerialFromUid(uidStr),
-                    bootloaderInfo = bl,
-                    appVersion = appVer
-                )
+            try {
+                val port = s.gatewayPort.toIntOrNull() ?: 3671
+                manager.openLink(s.gatewayIp.trim(), port, s.ownAddress.trim())
+
+                val address = resolveDeviceAddress(s)
+                withContext(Dispatchers.Main) {
+                    _uiState.value = _uiState.value.copy(foundDeviceAddress = address, progAddress = address)
+                }
+                appendLog("KNX: Programmiergerät = $address")
+
+                manager.openDevice(address)
+                val uid = manager.readUid()
+                val uidStr = uid.joinToString(":") { "%02X".format(it) }
+                manager.unlock(uid)
+                val bl = try { manager.requestBootloaderIdentity() } catch (_: Exception) { null }
+                val appVer = try { manager.requestAppVersion() } catch (_: Exception) { null }
+                withContext(Dispatchers.Main) {
+                    _uiState.value = _uiState.value.copy(
+                        uid = uidStr,
+                        knxSerial = MurmurHash3.knxSerialFromUid(uidStr),
+                        bootloaderInfo = bl,
+                        appVersion = appVer
+                    )
+                }
+            } catch (ex: Exception) {
+                manager.disconnect()
+                throw ex
             }
+        }
+    }
+
+    /** Discover KNXnet/IP gateways and populate the selection list. */
+    fun discoverGateways() {
+        if (_uiState.value.isBusy || _uiState.value.isDiscovering) return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isDiscovering = true)
+            try {
+                val gateways = withContext(Dispatchers.IO) { manager.discoverGateways() }
+                _uiState.value = _uiState.value.copy(discoveredGateways = gateways)
+                if (gateways.isNotEmpty()) {
+                    // Auto-select the first gateway if none is chosen yet.
+                    if (_uiState.value.selectedGatewayIndex !in gateways.indices) {
+                        selectGateway(0)
+                    }
+                } else {
+                    appendLog("Keine Gateways gefunden – IP ggf. manuell eingeben")
+                }
+            } catch (ex: Exception) {
+                appendLog("Fehler: ${ex.message}")
+            } finally {
+                _uiState.value = _uiState.value.copy(isDiscovering = false)
+            }
+        }
+    }
+
+    /** Select a discovered gateway and copy its endpoint into the input fields. */
+    fun selectGateway(index: Int) {
+        val gw = _uiState.value.discoveredGateways.getOrNull(index) ?: return
+        _uiState.value = _uiState.value.copy(
+            selectedGatewayIndex = index,
+            gatewayIp = gw.ip,
+            gatewayPort = gw.port.toString()
+        )
+    }
+
+    /** Determine the device address from the selected search mode. */
+    private fun resolveDeviceAddress(s: UiState): String {
+        return when (s.deviceSearchMode) {
+            DeviceSearchMode.PROG_BUTTON -> {
+                val devices = manager.findDevicesInProgrammingMode()
+                when {
+                    devices.isEmpty() ->
+                        throw KnxUpdaterManager.KnxUpdaterException(
+                            "Kein Gerät im Programmiermodus gefunden (Programmierknopf drücken)"
+                        )
+                    devices.size > 1 ->
+                        throw KnxUpdaterManager.KnxUpdaterException(
+                            "Mehrere Geräte im Programmiermodus: ${devices.joinToString()} – nur eines aktivieren"
+                        )
+                    else -> devices.first()
+                }
+            }
+            DeviceSearchMode.SERIAL -> {
+                val serial = parseKnxSerial(s.knxSerialInput)
+                    ?: throw KnxUpdaterManager.KnxUpdaterException(
+                        "Ungültige KNX-Seriennummer (Format: 013A:XXXXXXXX)"
+                    )
+                manager.findDeviceBySerial(serial)
+                    ?: throw KnxUpdaterManager.KnxUpdaterException(
+                        "Kein Gerät mit dieser Seriennummer gefunden"
+                    )
+            }
+            DeviceSearchMode.MANUAL -> {
+                if (s.progAddress.isBlank())
+                    throw KnxUpdaterManager.KnxUpdaterException("Bitte Geräteadresse eingeben")
+                s.progAddress.trim()
+            }
+        }
+    }
+
+    /** Parse a KNX serial like "013A:1A2B3C4D" (or without colon) into 6 bytes. */
+    private fun parseKnxSerial(input: String): ByteArray? {
+        val hex = input.filter { it.isLetterOrDigit() }.filter { it.lowercaseChar() in "0123456789abcdef" }
+        if (hex.length != 12) return null
+        return try {
+            ByteArray(6) { i -> hex.substring(i * 2, i * 2 + 2).toInt(16).toByte() }
+        } catch (_: Exception) {
+            null
         }
     }
 

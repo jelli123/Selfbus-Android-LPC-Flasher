@@ -70,7 +70,9 @@ Die beiden Funktionsbereiche sind über ein **Hamburger-Menü** (Navigation Draw
 
 ### KNX Bus-Updater (experimentell)
 - Flashen von Selfbus-Geräten über ein KNXnet/IP-Gateway (WLAN), ohne USB-Verbindung
-- Verbindung per Tunneling (calimero KNX-Stack); konfigurierbare Gateway-IP/Port, Geräte- und Eigenadresse
+- **Automatische Gateway-Erkennung** per KNXnet/IP-Multicast-Suche (224.0.23.12); gefundene Gateways werden mit direkter IP/Port zur Auswahl angeboten (Mehrfachauswahl möglich), alternativ manuelle Eingabe
+- **Automatische Geräteerkennung** des zu programmierenden Geräts wahlweise über den gedrückten Programmierknopf (Programmiermodus) oder über die KNX-Seriennummer (Format `013A:XXXXXXXX`); alternativ manuelle Geräteadresse
+- Verbindung per Tunneling (calimero KNX-Stack); konfigurierbare Gateway-IP/Port und eigene KNX-Adresse
 - Auslesen der 16-Byte UID und Anzeige der KNX-Seriennummer
 - Entsperren des Geräts, Abfrage von Bootloader- und App-Version
 - Vollständiges Flashen (Vollflash-Modus) inkl. Boot-Deskriptor, optionales Löschen des Bereichs

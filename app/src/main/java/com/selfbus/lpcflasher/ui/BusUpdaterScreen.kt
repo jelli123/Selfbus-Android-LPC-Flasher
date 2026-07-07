@@ -2,6 +2,7 @@ package com.selfbus.lpcflasher.ui
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -48,7 +49,51 @@ fun BusUpdaterScreen(
             // ---- Gateway / connection ----
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Gateway (KNXnet/IP)", style = MaterialTheme.typography.titleMedium)
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        Text("Gateway (KNXnet/IP)", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.weight(1f))
+                        if (uiState.isDiscovering) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                        } else {
+                            OutlinedButton(
+                                onClick = { viewModel.discoverGateways() },
+                                enabled = !uiState.isBusy && !uiState.isConnected
+                            ) { Text("Suchen") }
+                        }
+                    }
+
+                    // Discovered gateways (selectable)
+                    if (uiState.discoveredGateways.isNotEmpty()) {
+                        Text("Gefundene Gateways:", style = MaterialTheme.typography.bodySmall)
+                        uiState.discoveredGateways.forEachIndexed { index, gw ->
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .selectable(
+                                        selected = uiState.selectedGatewayIndex == index,
+                                        enabled = !uiState.isBusy && !uiState.isConnected,
+                                        onClick = { viewModel.selectGateway(index) }
+                                    )
+                            ) {
+                                RadioButton(
+                                    selected = uiState.selectedGatewayIndex == index,
+                                    onClick = { viewModel.selectGateway(index) },
+                                    enabled = !uiState.isBusy && !uiState.isConnected
+                                )
+                                Column {
+                                    Text(gw.name, fontSize = 13.sp)
+                                    Text(
+                                        "${gw.ip}:${gw.port}",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 12.sp,
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedTextField(
                             value = uiState.gatewayIp,
@@ -68,23 +113,72 @@ fun BusUpdaterScreen(
                             modifier = Modifier.weight(1f)
                         )
                     }
+                    OutlinedTextField(
+                        value = uiState.ownAddress,
+                        onValueChange = viewModel::setOwnAddress,
+                        label = { Text("Eigene KNX-Adresse") },
+                        singleLine = true,
+                        enabled = !uiState.isBusy && !uiState.isConnected,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+
+            // ---- Device search ----
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Zu programmierendes Gerät", style = MaterialTheme.typography.titleMedium)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            value = uiState.progAddress,
-                            onValueChange = viewModel::setProgAddress,
-                            label = { Text("Geräteadresse") },
-                            singleLine = true,
-                            enabled = !uiState.isBusy && !uiState.isConnected,
-                            modifier = Modifier.weight(1f)
+                        FilterChip(
+                            selected = uiState.deviceSearchMode == BusUpdaterViewModel.DeviceSearchMode.PROG_BUTTON,
+                            onClick = { viewModel.setDeviceSearchMode(BusUpdaterViewModel.DeviceSearchMode.PROG_BUTTON) },
+                            label = { Text("Prog.-Knopf") },
+                            enabled = !uiState.isBusy && !uiState.isConnected
                         )
-                        OutlinedTextField(
-                            value = uiState.ownAddress,
-                            onValueChange = viewModel::setOwnAddress,
-                            label = { Text("Eigene Adresse") },
-                            singleLine = true,
-                            enabled = !uiState.isBusy && !uiState.isConnected,
-                            modifier = Modifier.weight(1f)
+                        FilterChip(
+                            selected = uiState.deviceSearchMode == BusUpdaterViewModel.DeviceSearchMode.SERIAL,
+                            onClick = { viewModel.setDeviceSearchMode(BusUpdaterViewModel.DeviceSearchMode.SERIAL) },
+                            label = { Text("Seriennr.") },
+                            enabled = !uiState.isBusy && !uiState.isConnected
                         )
+                        FilterChip(
+                            selected = uiState.deviceSearchMode == BusUpdaterViewModel.DeviceSearchMode.MANUAL,
+                            onClick = { viewModel.setDeviceSearchMode(BusUpdaterViewModel.DeviceSearchMode.MANUAL) },
+                            label = { Text("Manuell") },
+                            enabled = !uiState.isBusy && !uiState.isConnected
+                        )
+                    }
+                    when (uiState.deviceSearchMode) {
+                        BusUpdaterViewModel.DeviceSearchMode.PROG_BUTTON -> {
+                            Text(
+                                "Programmierknopf am Zielgerät drücken, dann verbinden.",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        BusUpdaterViewModel.DeviceSearchMode.SERIAL -> {
+                            OutlinedTextField(
+                                value = uiState.knxSerialInput,
+                                onValueChange = viewModel::setKnxSerialInput,
+                                label = { Text("KNX-Seriennummer") },
+                                placeholder = { Text("013A:XXXXXXXX") },
+                                singleLine = true,
+                                enabled = !uiState.isBusy && !uiState.isConnected,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                        BusUpdaterViewModel.DeviceSearchMode.MANUAL -> {
+                            OutlinedTextField(
+                                value = uiState.progAddress,
+                                onValueChange = viewModel::setProgAddress,
+                                label = { Text("Geräteadresse (z. B. 15.15.192)") },
+                                singleLine = true,
+                                enabled = !uiState.isBusy && !uiState.isConnected,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+                    uiState.foundDeviceAddress?.let {
+                        Text("Gefunden: $it", fontFamily = FontFamily.Monospace, fontSize = 13.sp)
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(

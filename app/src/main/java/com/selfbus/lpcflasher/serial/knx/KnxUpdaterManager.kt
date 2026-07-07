@@ -1,19 +1,25 @@
 package com.selfbus.lpcflasher.serial.knx
 
+import android.content.Context
+import android.net.wifi.WifiManager
 import tuwien.auto.calimero.IndividualAddress
 import tuwien.auto.calimero.Priority
 import tuwien.auto.calimero.DataUnitBuilder
 import tuwien.auto.calimero.FrameEvent
 import tuwien.auto.calimero.DetachEvent
+import tuwien.auto.calimero.SerialNumber
 import tuwien.auto.calimero.cemi.CEMILData
+import tuwien.auto.calimero.knxnetip.Discoverer
 import tuwien.auto.calimero.knxnetip.KNXNetworkLinkIP
 import tuwien.auto.calimero.link.KNXNetworkLink
 import tuwien.auto.calimero.link.medium.TPSettings
 import tuwien.auto.calimero.mgmt.Destination
+import tuwien.auto.calimero.mgmt.ManagementClientImpl
 import tuwien.auto.calimero.mgmt.TransportLayer
 import tuwien.auto.calimero.mgmt.TransportLayerImpl
 import tuwien.auto.calimero.mgmt.TransportListener
 import java.net.InetSocketAddress
+import java.time.Duration
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.TimeUnit
 
@@ -36,6 +42,7 @@ import java.util.concurrent.TimeUnit
  *  - Flashing can brick a device on protocol errors — test carefully.
  */
 class KnxUpdaterManager(
+    private val context: Context,
     private val log: (String) -> Unit
 ) {
     companion object {
@@ -57,9 +64,15 @@ class KnxUpdaterManager(
 
     class KnxUpdaterException(message: String) : Exception(message)
 
+    /** A KNXnet/IP gateway found during discovery. */
+    data class GatewayInfo(val name: String, val ip: String, val port: Int) {
+        override fun toString(): String = "$name ($ip:$port)"
+    }
+
     private var link: KNXNetworkLink? = null
     private var transport: TransportLayer? = null
     private var destination: Destination? = null
+    private var ownAddress: String = "15.15.250"
 
     /** Queue of received UPD response ASDUs (asdu[0]=command, asdu[1..]=data). */
     private val responses = ArrayBlockingQueue<ByteArray>(8)
@@ -85,37 +98,141 @@ class KnxUpdaterManager(
         responses.offer(asdu)
     }
 
-    val isConnected: Boolean get() = link?.isOpen == true
+    /** True once a device destination is connected (ready for UPD). */
+    val isConnected: Boolean get() = link?.isOpen == true && destination != null
+
+    /** True once the KNXnet/IP link to the gateway is open. */
+    val isLinkOpen: Boolean get() = link?.isOpen == true
+
+    // ---------------------------------------------------------------------
+    // Gateway discovery (KNXnet/IP multicast search 224.0.23.12)
+    // ---------------------------------------------------------------------
+
+    /**
+     * Discover KNXnet/IP gateways on the local network via multicast search.
+     * Returns the direct control endpoint (IP + port) of every gateway found.
+     *
+     * On Android a [WifiManager.MulticastLock] is required to receive the
+     * multicast/unicast search responses over Wi-Fi.
+     */
+    fun discoverGateways(timeoutSeconds: Int = 4): List<GatewayInfo> {
+        log("KNX: Suche nach Gateways (Multicast ${Discoverer.SEARCH_MULTICAST}) ...")
+        val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+        val lock = wifi?.createMulticastLock("selfbus-knx-discovery")?.apply {
+            setReferenceCounted(true)
+            runCatching { acquire() }
+        }
+        val found = LinkedHashMap<String, GatewayInfo>()
+        try {
+            val discoverer = Discoverer(0, false)
+            discoverer.startSearch(timeoutSeconds, true)
+            for (result in discoverer.getSearchResponses()) {
+                val response = result.response
+                val ctrl = response.controlEndpoint
+                var ip = ctrl.address?.hostAddress
+                // Fall back to the sender endpoint when the HPAI carries a wildcard (NAT).
+                if (ip == null || ip == "0.0.0.0") {
+                    ip = result.remoteEndpoint()?.address?.hostAddress
+                }
+                if (ip == null) continue
+                val port = if (ctrl.port in 1..0xFFFF) ctrl.port else Discoverer.SEARCH_PORT
+                val name = runCatching { response.device.name }.getOrNull() ?: "KNX IP Gateway"
+                found.putIfAbsent("$ip:$port", GatewayInfo(name, ip, port))
+            }
+        } catch (ex: Exception) {
+            throw KnxUpdaterException("Gateway-Suche fehlgeschlagen: ${ex.message}")
+        } finally {
+            runCatching { lock?.release() }
+        }
+        log("KNX: ${found.size} Gateway(s) gefunden")
+        return found.values.toList()
+    }
 
     // ---------------------------------------------------------------------
     // Connection management
     // ---------------------------------------------------------------------
 
-    fun connect(gatewayIp: String, port: Int, ownAddress: String, progAddress: String) {
+    /** Open the KNXnet/IP tunneling link to the gateway (no device destination yet). */
+    fun openLink(gatewayIp: String, port: Int, ownAddress: String) {
         disconnect()
+        this.ownAddress = ownAddress
         log("KNX: Verbinde mit Gateway $gatewayIp:$port ...")
         val localEp = InetSocketAddress(0)
         val remoteEp = InetSocketAddress(gatewayIp, port)
         val settings = TPSettings(IndividualAddress(ownAddress))
-        val newLink = try {
+        link = try {
             KNXNetworkLinkIP.newTunnelingLink(localEp, remoteEp, false, settings)
         } catch (ex: Exception) {
             throw KnxUpdaterException("Tunneling-Verbindung fehlgeschlagen: ${ex.message}")
         }
-        val tl = TransportLayerImpl(newLink)
+        log("KNX: Gateway verbunden")
+    }
+
+    /** Open a connection-oriented destination to the programming device for UPD. */
+    fun openDevice(progAddress: String) {
+        val currentLink = link ?: throw KnxUpdaterException("Kein Gateway verbunden")
+        val tl = TransportLayerImpl(currentLink)
         tl.addTransportListener(listener)
         val dst = tl.createDestination(IndividualAddress(progAddress), true)
         try {
             tl.connect(dst)
         } catch (ex: Exception) {
             tl.detach()
-            newLink.close()
             throw KnxUpdaterException("Aufbau der Verbindung zu $progAddress fehlgeschlagen: ${ex.message}")
         }
-        link = newLink
         transport = tl
         destination = dst
         log("KNX: Verbunden mit Programmiergerät $progAddress")
+    }
+
+    /** Convenience: open link and device destination in one step. */
+    fun connect(gatewayIp: String, port: Int, ownAddress: String, progAddress: String) {
+        openLink(gatewayIp, port, ownAddress)
+        openDevice(progAddress)
+    }
+
+    // ---------------------------------------------------------------------
+    // Device lookup (requires an open link, but no destination yet)
+    // ---------------------------------------------------------------------
+
+    /**
+     * Find the individual addresses of all devices currently in programming mode
+     * (programming button pressed). Uses a temporary management client that is
+     * detached afterwards without closing the link.
+     */
+    fun findDevicesInProgrammingMode(timeoutSeconds: Int = 3): List<String> {
+        val currentLink = link ?: throw KnxUpdaterException("Kein Gateway verbunden")
+        log("KNX: Suche Gerät im Programmiermodus ...")
+        val mc = ManagementClientImpl(currentLink)
+        return try {
+            mc.responseTimeout(Duration.ofSeconds(timeoutSeconds.toLong()))
+            mc.readAddress(false).map { it.toString() }
+        } catch (ex: Exception) {
+            emptyList()
+        } finally {
+            runCatching { mc.detach() }
+        }
+    }
+
+    /**
+     * Read the individual address of the device with the given 6-byte KNX serial
+     * number. Returns null if no device answered.
+     */
+    fun findDeviceBySerial(serial6: ByteArray, timeoutSeconds: Int = 3): String? {
+        if (serial6.size != SerialNumber.Size) {
+            throw KnxUpdaterException("Ungültige KNX-Seriennummer (${serial6.size} statt ${SerialNumber.Size} Bytes)")
+        }
+        val currentLink = link ?: throw KnxUpdaterException("Kein Gateway verbunden")
+        log("KNX: Suche Gerät über Seriennummer ...")
+        val mc = ManagementClientImpl(currentLink)
+        return try {
+            mc.responseTimeout(Duration.ofSeconds(timeoutSeconds.toLong()))
+            mc.readAddress(SerialNumber.from(serial6)).toString()
+        } catch (ex: Exception) {
+            null
+        } finally {
+            runCatching { mc.detach() }
+        }
     }
 
     fun disconnect() {
