@@ -48,7 +48,7 @@ android {
 
 dependencies {
     // Compose BOM
-    val composeBom = platform("androidx.compose:compose-bom:2024.01.00")
+    val composeBom = platform("androidx.compose:compose-bom:2024.12.01")
     implementation(composeBom)
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.ui:ui")
@@ -57,11 +57,11 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     // Activity Compose
-    implementation("androidx.activity:activity-compose:1.8.2")
+    implementation("androidx.activity:activity-compose:1.9.3")
 
     // Lifecycle
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
@@ -73,7 +73,7 @@ dependencies {
     implementation("com.github.mik3y:usb-serial-for-android:3.7.3")
 
     // KNX stack for the Bus-Updater (KNXnet/IP). Package: tuwien.auto.calimero
-    implementation("com.github.calimero:calimero-core:2.5")
+    implementation("com.github.calimero:calimero-core:2.4")
     // SLF4J binding for Android (calimero logs via SLF4J)
     implementation("org.slf4j:slf4j-api:1.7.36")
     implementation("uk.uuid.slf4j:slf4j-android:1.7.30-0")

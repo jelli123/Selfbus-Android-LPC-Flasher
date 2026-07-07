@@ -2,15 +2,15 @@ package com.selfbus.lpcflasher.serial.knx
 
 import android.content.Context
 import android.net.wifi.WifiManager
+import tuwien.auto.calimero.CloseEvent
 import tuwien.auto.calimero.IndividualAddress
 import tuwien.auto.calimero.Priority
 import tuwien.auto.calimero.DataUnitBuilder
 import tuwien.auto.calimero.FrameEvent
 import tuwien.auto.calimero.DetachEvent
-import tuwien.auto.calimero.SerialNumber
 import tuwien.auto.calimero.cemi.CEMILData
 import tuwien.auto.calimero.knxnetip.Discoverer
-import tuwien.auto.calimero.knxnetip.KNXNetworkLinkIP
+import tuwien.auto.calimero.link.KNXNetworkLinkIP
 import tuwien.auto.calimero.link.KNXNetworkLink
 import tuwien.auto.calimero.link.medium.TPSettings
 import tuwien.auto.calimero.mgmt.Destination
@@ -19,7 +19,6 @@ import tuwien.auto.calimero.mgmt.TransportLayer
 import tuwien.auto.calimero.mgmt.TransportLayerImpl
 import tuwien.auto.calimero.mgmt.TransportListener
 import java.net.InetSocketAddress
-import java.time.Duration
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.TimeUnit
 
@@ -42,6 +41,7 @@ import java.util.concurrent.TimeUnit
  *  - Flashing can brick a device on protocol errors — test carefully.
  */
 class KnxUpdaterManager(
+    private val context: Context,
     private val log: (String) -> Unit
 ) {
     companion object {
@@ -205,7 +205,7 @@ class KnxUpdaterManager(
         log("KNX: Suche Gerät im Programmiermodus ...")
         val mc = ManagementClientImpl(currentLink)
         return try {
-            mc.responseTimeout(Duration.ofSeconds(timeoutSeconds.toLong()))
+            mc.responseTimeout = timeoutSeconds
             mc.readAddress(false).map { it.toString() }
         } catch (ex: Exception) {
             emptyList()
@@ -219,15 +219,15 @@ class KnxUpdaterManager(
      * number. Returns null if no device answered.
      */
     fun findDeviceBySerial(serial6: ByteArray, timeoutSeconds: Int = 3): String? {
-        if (serial6.size != SerialNumber.Size) {
-            throw KnxUpdaterException("Ungültige KNX-Seriennummer (${serial6.size} statt ${SerialNumber.Size} Bytes)")
+        if (serial6.size != 6) {
+            throw KnxUpdaterException("Ungültige KNX-Seriennummer (${serial6.size} statt 6 Bytes)")
         }
         val currentLink = link ?: throw KnxUpdaterException("Kein Gateway verbunden")
         log("KNX: Suche Gerät über Seriennummer ...")
         val mc = ManagementClientImpl(currentLink)
         return try {
-            mc.responseTimeout(Duration.ofSeconds(timeoutSeconds.toLong()))
-            mc.readAddress(SerialNumber.from(serial6)).toString()
+            mc.responseTimeout = timeoutSeconds
+            mc.readAddress(serial6).toString()
         } catch (ex: Exception) {
             null
         } finally {
@@ -373,7 +373,7 @@ class KnxUpdaterManager(
             val tl = transport ?: return
             val dst = destination ?: return
             // A_Restart (basic) — APCI 0x0380, no ASDU
-            val apdu = DataUnitBuilder.createAPDU(0x0380, *byteArrayOf())
+            val apdu = DataUnitBuilder.createAPDU(0x0380, byteArrayOf())
             tl.sendData(dst, Priority.SYSTEM, apdu)
             log("KNX: Neustart-Befehl gesendet")
         } catch (ex: Exception) {
