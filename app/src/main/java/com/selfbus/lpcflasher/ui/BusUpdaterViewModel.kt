@@ -6,7 +6,9 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.selfbus.lpcflasher.data.FirmwareCatalog
 import com.selfbus.lpcflasher.data.HexParser
+import com.selfbus.lpcflasher.data.I18n
 import com.selfbus.lpcflasher.data.MurmurHash3
+import com.selfbus.lpcflasher.data.Settings
 import com.selfbus.lpcflasher.serial.knx.KnxUpdaterManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -66,7 +68,9 @@ class BusUpdaterViewModel(application: Application) : AndroidViewModel(applicati
 
         val isConnected: Boolean = false,
         val isBusy: Boolean = false,
-        val progress: Int = -1 // -1 = hidden
+        val progress: Int = -1, // -1 = hidden
+
+        val language: I18n.Lang = I18n.currentLanguage
     )
 
     private val _uiState = MutableStateFlow(UiState())
@@ -105,6 +109,15 @@ class BusUpdaterViewModel(application: Application) : AndroidViewModel(applicati
     fun setKnxSerialInput(v: String) { _uiState.value = _uiState.value.copy(knxSerialInput = v) }
     fun setDeviceAddressInput(v: String) { _uiState.value = _uiState.value.copy(deviceAddressInput = v) }
     fun setUidInput(v: String) { _uiState.value = _uiState.value.copy(uidInput = v) }
+
+    /** Toggle the UI language (shared globally with the LPC Flasher). */
+    fun setLanguage(lang: I18n.Lang) {
+        I18n.currentLanguage = lang
+        Settings.language = if (lang == I18n.Lang.EN) "en" else "de"
+        _uiState.value = _uiState.value.copy(language = lang)
+        // Refresh catalog display names for the new language
+        selectCategory(_uiState.value.selectedCategory)
+    }
 
     // ---- Firmware loading ----
     fun loadFirmwareFile(uri: Uri) {
@@ -407,9 +420,10 @@ class BusUpdaterViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun selectCategory(categoryKey: String?) {
+        val lang = if (I18n.currentLanguage == I18n.Lang.DE) "de" else "en"
         _uiState.value = _uiState.value.copy(
             selectedCategory = categoryKey,
-            devices = if (categoryKey != null) FirmwareCatalog.getDevicesForCategory(categoryKey, "de") else emptyList(),
+            devices = if (categoryKey != null) FirmwareCatalog.getDevicesForCategory(categoryKey, lang) else emptyList(),
             selectedDevice = null,
             firmwareVariants = emptyList(),
             selectedVariant = null

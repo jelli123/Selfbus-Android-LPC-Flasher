@@ -16,6 +16,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.selfbus.lpcflasher.data.FirmwareCatalog
+import com.selfbus.lpcflasher.data.I18n
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -34,6 +35,16 @@ fun BusUpdaterScreen(
                 navigationIcon = {
                     IconButton(onClick = onMenuClick) {
                         Icon(Icons.Default.Menu, contentDescription = "Menü")
+                    }
+                },
+                actions = {
+                    // Language toggle (shared globally with the LPC Flasher)
+                    TextButton(onClick = {
+                        viewModel.setLanguage(
+                            if (uiState.language == I18n.Lang.DE) I18n.Lang.EN else I18n.Lang.DE
+                        )
+                    }) {
+                        Text(if (uiState.language == I18n.Lang.DE) "EN" else "DE")
                     }
                 }
             )
@@ -365,6 +376,7 @@ private fun BusUpdaterCatalog(
     viewModel: BusUpdaterViewModel
 ) {
     val enabled = !uiState.isBusy && !uiState.isConnected
+    val lang = if (uiState.language == I18n.Lang.DE) "de" else "en"
 
     // Category
     var catExpanded by remember { mutableStateOf(false) }
@@ -372,20 +384,20 @@ private fun BusUpdaterCatalog(
         OutlinedTextField(
             value = uiState.selectedCategory?.let { key ->
                 uiState.categories.find { it.first == key }?.let { (_, cat) ->
-                    "${cat.icon} ${cat.name["de"] ?: cat.name["en"] ?: key}"
+                    "${cat.icon} ${cat.name[lang] ?: cat.name["en"] ?: key}"
                 }
-            } ?: "Kategorie wählen",
+            } ?: I18n.t("selectCategory"),
             onValueChange = {},
             readOnly = true,
             enabled = enabled,
-            label = { Text("Kategorie") },
+            label = { Text(I18n.t("category")) },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = catExpanded) },
             modifier = Modifier.menuAnchor().fillMaxWidth()
         )
         ExposedDropdownMenu(expanded = catExpanded, onDismissRequest = { catExpanded = false }) {
             uiState.categories.forEach { (key, cat) ->
                 DropdownMenuItem(
-                    text = { Text("${cat.icon} ${cat.name["de"] ?: cat.name["en"] ?: key}") },
+                    text = { Text("${cat.icon} ${cat.name[lang] ?: cat.name["en"] ?: key}") },
                     onClick = { viewModel.selectCategory(key); catExpanded = false }
                 )
             }
@@ -399,20 +411,20 @@ private fun BusUpdaterCatalog(
             OutlinedTextField(
                 value = uiState.selectedDevice?.let { id ->
                     uiState.devices.find { it.first == id }?.let { (_, dev) ->
-                        dev.name["de"] ?: dev.name["en"] ?: id
+                        dev.name[lang] ?: dev.name["en"] ?: id
                     }
-                } ?: "Gerät wählen",
+                } ?: I18n.t("selectDevice"),
                 onValueChange = {},
                 readOnly = true,
                 enabled = enabled,
-                label = { Text("Gerät") },
+                label = { Text(I18n.t("device")) },
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = devExpanded) },
                 modifier = Modifier.menuAnchor().fillMaxWidth()
             )
             ExposedDropdownMenu(expanded = devExpanded, onDismissRequest = { devExpanded = false }) {
                 uiState.devices.forEach { (id, dev) ->
                     DropdownMenuItem(
-                        text = { Text(dev.name["de"] ?: dev.name["en"] ?: id) },
+                        text = { Text(dev.name[lang] ?: dev.name["en"] ?: id) },
                         onClick = { viewModel.selectDevice(id); devExpanded = false }
                     )
                 }
