@@ -37,7 +37,7 @@ fun BusUpdaterScreen(
                 title = { Text("KNX Bus-Updater") },
                 navigationIcon = {
                     IconButton(onClick = onMenuClick) {
-                        Icon(Icons.Default.Menu, contentDescription = "Menü")
+                        Icon(Icons.Default.Menu, contentDescription = I18n.t("bu_menu"))
                     }
                 },
                 actions = {
@@ -69,7 +69,7 @@ fun BusUpdaterScreen(
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                        Text("Gateway (KNXnet/IP)", style = MaterialTheme.typography.titleMedium)
+                        Text(I18n.t("bu_gateway"), style = MaterialTheme.typography.titleMedium)
                         Spacer(Modifier.weight(1f))
                         if (uiState.isDiscovering) {
                             CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
@@ -77,13 +77,13 @@ fun BusUpdaterScreen(
                             OutlinedButton(
                                 onClick = { viewModel.discoverGateways() },
                                 enabled = !uiState.isBusy && !uiState.isConnected
-                            ) { Text("Suchen") }
+                            ) { Text(I18n.t("bu_search")) }
                         }
                     }
 
                     // Discovered gateways (selectable)
                     if (uiState.discoveredGateways.isNotEmpty()) {
-                        Text("Gefundene Gateways:", style = MaterialTheme.typography.bodySmall)
+                        Text(I18n.t("bu_foundGateways"), style = MaterialTheme.typography.bodySmall)
                         uiState.discoveredGateways.forEachIndexed { index, gw ->
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
@@ -117,7 +117,7 @@ fun BusUpdaterScreen(
                         OutlinedTextField(
                             value = uiState.gatewayIp,
                             onValueChange = viewModel::setGatewayIp,
-                            label = { Text("IP-Adresse") },
+                            label = { Text(I18n.t("bu_ipAddress")) },
                             singleLine = true,
                             enabled = !uiState.isBusy && !uiState.isConnected,
                             modifier = Modifier.weight(2f)
@@ -125,7 +125,7 @@ fun BusUpdaterScreen(
                         OutlinedTextField(
                             value = uiState.gatewayPort,
                             onValueChange = viewModel::setGatewayPort,
-                            label = { Text("Port") },
+                            label = { Text(I18n.t("bu_port")) },
                             singleLine = true,
                             enabled = !uiState.isBusy && !uiState.isConnected,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -135,7 +135,7 @@ fun BusUpdaterScreen(
                     OutlinedTextField(
                         value = uiState.ownAddress,
                         onValueChange = viewModel::setOwnAddress,
-                        label = { Text("Eigene KNX-Adresse") },
+                        label = { Text(I18n.t("bu_ownAddress")) },
                         singleLine = true,
                         enabled = !uiState.isBusy && !uiState.isConnected,
                         modifier = Modifier.fillMaxWidth()
@@ -146,37 +146,37 @@ fun BusUpdaterScreen(
             // ---- Device search ----
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Zu programmierendes Gerät", style = MaterialTheme.typography.titleMedium)
+                    Text(I18n.t("bu_deviceToProgram"), style = MaterialTheme.typography.titleMedium)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(
                             selected = uiState.deviceSearchMode == BusUpdaterViewModel.DeviceSearchMode.PROG_BUTTON,
                             onClick = { viewModel.setDeviceSearchMode(BusUpdaterViewModel.DeviceSearchMode.PROG_BUTTON) },
-                            label = { Text("Prog.-Knopf") },
+                            label = { Text(I18n.t("bu_progButton")) },
                             enabled = !uiState.isBusy && !uiState.isConnected
                         )
                         FilterChip(
                             selected = uiState.deviceSearchMode == BusUpdaterViewModel.DeviceSearchMode.SERIAL,
                             onClick = { viewModel.setDeviceSearchMode(BusUpdaterViewModel.DeviceSearchMode.SERIAL) },
-                            label = { Text("Seriennr.") },
+                            label = { Text(I18n.t("bu_serialNo")) },
                             enabled = !uiState.isBusy && !uiState.isConnected
                         )
                         FilterChip(
                             selected = uiState.deviceSearchMode == BusUpdaterViewModel.DeviceSearchMode.DEVICE_ADDRESS,
                             onClick = { viewModel.setDeviceSearchMode(BusUpdaterViewModel.DeviceSearchMode.DEVICE_ADDRESS) },
-                            label = { Text("Geräteadresse") },
+                            label = { Text(I18n.t("bu_deviceAddressChip")) },
                             enabled = !uiState.isBusy && !uiState.isConnected
                         )
                         FilterChip(
                             selected = uiState.deviceSearchMode == BusUpdaterViewModel.DeviceSearchMode.MANUAL,
                             onClick = { viewModel.setDeviceSearchMode(BusUpdaterViewModel.DeviceSearchMode.MANUAL) },
-                            label = { Text("Manuell") },
+                            label = { Text(I18n.t("bu_manual")) },
                             enabled = !uiState.isBusy && !uiState.isConnected
                         )
                     }
                     when (uiState.deviceSearchMode) {
                         BusUpdaterViewModel.DeviceSearchMode.PROG_BUTTON -> {
                             Text(
-                                "Programmierknopf am Zielgerät drücken, dann verbinden.",
+                                I18n.t("bu_progButtonHint"),
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
@@ -184,15 +184,14 @@ fun BusUpdaterScreen(
                             OutlinedTextField(
                                 value = uiState.knxSerialInput,
                                 onValueChange = viewModel::setKnxSerialInput,
-                                label = { Text("KNX-Seriennummer") },
+                                label = { Text(I18n.t("bu_knxSerial")) },
                                 placeholder = { Text("013A:XXXXXXXX") },
                                 singleLine = true,
                                 enabled = !uiState.isBusy && !uiState.isConnected,
                                 modifier = Modifier.fillMaxWidth()
                             )
                             Text(
-                                "Findet das laufende Gerät und startet es in den Bootloader. " +
-                                    "Hinweis: Der Bootloader selbst antwortet ggf. nicht auf die Seriennummer.",
+                                I18n.t("bu_serialHint"),
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
@@ -200,13 +199,13 @@ fun BusUpdaterScreen(
                             OutlinedTextField(
                                 value = uiState.deviceAddressInput,
                                 onValueChange = viewModel::setDeviceAddressInput,
-                                label = { Text("Geräteadresse (Normalbetrieb, z. B. 1.1.5)") },
+                                label = { Text(I18n.t("bu_deviceAddressLabel")) },
                                 singleLine = true,
                                 enabled = !uiState.isBusy && !uiState.isConnected,
                                 modifier = Modifier.fillMaxWidth()
                             )
                             Text(
-                                "Startet das Gerät über die KNX-Adresse in den Bootloader (Programmiermodus).",
+                                I18n.t("bu_deviceAddressHint"),
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
@@ -214,7 +213,7 @@ fun BusUpdaterScreen(
                             OutlinedTextField(
                                 value = uiState.progAddress,
                                 onValueChange = viewModel::setProgAddress,
-                                label = { Text("Bootloader-Adresse (z. B. 15.15.192)") },
+                                label = { Text(I18n.t("bu_bootloaderAddress")) },
                                 singleLine = true,
                                 enabled = !uiState.isBusy && !uiState.isConnected,
                                 modifier = Modifier.fillMaxWidth()
@@ -224,26 +223,26 @@ fun BusUpdaterScreen(
                     OutlinedTextField(
                         value = uiState.uidInput,
                         onValueChange = viewModel::setUidInput,
-                        label = { Text("UID zum Entsperren (optional)") },
-                        placeholder = { Text("leer = automatisch vom Bootloader lesen") },
+                        label = { Text(I18n.t("bu_uidUnlock")) },
+                        placeholder = { Text(I18n.t("bu_uidPlaceholder")) },
                         singleLine = true,
                         enabled = !uiState.isBusy && !uiState.isConnected,
                         modifier = Modifier.fillMaxWidth()
                     )
                     uiState.foundDeviceAddress?.let {
-                        Text("Gefunden: $it", fontFamily = FontFamily.Monospace, fontSize = 13.sp)
+                        Text("${I18n.t("bu_found")} $it", fontFamily = FontFamily.Monospace, fontSize = 13.sp)
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(
                             onClick = { viewModel.connectAndIdentify() },
                             enabled = !uiState.isBusy && !uiState.isConnected,
                             modifier = Modifier.weight(1f)
-                        ) { Text("Verbinden") }
+                        ) { Text(I18n.t("bu_connect")) }
                         OutlinedButton(
                             onClick = { viewModel.disconnect() },
                             enabled = !uiState.isBusy && uiState.isConnected,
                             modifier = Modifier.weight(1f)
-                        ) { Text("Trennen") }
+                        ) { Text(I18n.t("bu_disconnect")) }
                     }
                 }
             }
@@ -252,7 +251,7 @@ fun BusUpdaterScreen(
             if (uiState.uid != null || uiState.bootloaderInfo != null || uiState.appVersion != null) {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("Geräteinformationen", style = MaterialTheme.typography.titleMedium)
+                        Text(I18n.t("bu_deviceInfo"), style = MaterialTheme.typography.titleMedium)
                         uiState.uid?.let {
                             Text("UID: $it", fontFamily = FontFamily.Monospace, fontSize = 13.sp)
                         }
@@ -260,10 +259,10 @@ fun BusUpdaterScreen(
                             Text("KNX#: $it", fontFamily = FontFamily.Monospace, fontSize = 13.sp)
                         }
                         uiState.bootloaderInfo?.let {
-                            Text("Bootloader: $it", fontSize = 13.sp)
+                            Text("${I18n.t("bu_bootloaderLabel")} $it", fontSize = 13.sp)
                         }
                         uiState.appVersion?.let {
-                            if (it.isNotBlank()) Text("App-Version: $it", fontSize = 13.sp)
+                            if (it.isNotBlank()) Text("${I18n.t("bu_appVersionLabel")} $it", fontSize = 13.sp)
                         }
                     }
                 }
@@ -272,7 +271,7 @@ fun BusUpdaterScreen(
             // ---- Firmware ----
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Firmware", style = MaterialTheme.typography.titleMedium)
+                    Text(I18n.t("bu_firmware"), style = MaterialTheme.typography.titleMedium)
 
                     // Firmware catalog (only bootloader-based "flashstart" versions)
                     BusUpdaterCatalog(uiState, viewModel)
@@ -289,14 +288,14 @@ fun BusUpdaterScreen(
                         onClick = onOpenFile,
                         enabled = !uiState.isBusy,
                         modifier = Modifier.fillMaxWidth()
-                    ) { Text("Eigene Datei wählen (.hex / .bin)") }
+                    ) { Text(I18n.t("bu_selectOwnFile")) }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(
                             checked = uiState.eraseBeforeFlash,
                             onCheckedChange = viewModel::setEraseBeforeFlash,
                             enabled = !uiState.isBusy
                         )
-                        Text("Bereich vor dem Flashen löschen")
+                        Text(I18n.t("bu_eraseBeforeFlash"))
                     }
                 }
             }
@@ -304,23 +303,23 @@ fun BusUpdaterScreen(
             // ---- Actions ----
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Aktionen", style = MaterialTheme.typography.titleMedium)
+                    Text(I18n.t("bu_actions"), style = MaterialTheme.typography.titleMedium)
                     Button(
                         onClick = { viewModel.flashFirmware() },
                         enabled = !uiState.isBusy && uiState.isConnected && uiState.firmwareFileName != null,
                         modifier = Modifier.fillMaxWidth()
-                    ) { Text("Flashen") }
+                    ) { Text(I18n.t("bu_flash")) }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(
                             onClick = { viewModel.eraseFlash() },
                             enabled = !uiState.isBusy && uiState.isConnected,
                             modifier = Modifier.weight(1f)
-                        ) { Text("Löschen") }
+                        ) { Text(I18n.t("bu_erase")) }
                         OutlinedButton(
                             onClick = { viewModel.restartDevice() },
                             enabled = !uiState.isBusy && uiState.isConnected,
                             modifier = Modifier.weight(1f)
-                        ) { Text("Neustart") }
+                        ) { Text(I18n.t("bu_restart")) }
                     }
                 }
             }
@@ -343,9 +342,9 @@ fun BusUpdaterScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("Protokoll", style = MaterialTheme.typography.titleMedium)
+                        Text(I18n.t("bu_log"), style = MaterialTheme.typography.titleMedium)
                         Spacer(Modifier.weight(1f))
-                        TextButton(onClick = { viewModel.clearLog() }) { Text("Leeren") }
+                        TextButton(onClick = { viewModel.clearLog() }) { Text(I18n.t("bu_clear")) }
                     }
                     if (log.isEmpty()) {
                         Text("—", style = MaterialTheme.typography.bodySmall)
@@ -363,8 +362,7 @@ fun BusUpdaterScreen(
             }
 
             Text(
-                "Hinweis: KNX-Flashing ist experimentell und noch nicht am Gerät getestet. " +
-                    "Nur Vollflash-Modus. Bei Protokollfehlern kann ein Gerät unbrauchbar werden.",
+                I18n.t("bu_experimentalHint"),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error
             )
@@ -378,9 +376,10 @@ fun BusUpdaterScreen(
 
 /**
  * "About" popup showing the app version and Selfbus copyright.
+ * Shared between the Bus-Updater and the LPC Flasher screens.
  */
 @Composable
-private fun AboutDialog(onDismiss: () -> Unit) {
+fun AboutDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
     val versionName = try {
         context.packageManager.getPackageInfo(context.packageName, 0).versionName
@@ -398,7 +397,7 @@ private fun AboutDialog(onDismiss: () -> Unit) {
         title = { Text("Selfbus Flasher") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("Version v$versionName", style = MaterialTheme.typography.bodyMedium)
+                Text("${I18n.t("bu_version")} v$versionName", style = MaterialTheme.typography.bodyMedium)
                 Text(
                     "© $year selfbus.org",
                     style = MaterialTheme.typography.bodyMedium
@@ -482,11 +481,11 @@ private fun BusUpdaterCatalog(
 
     // Firmware variant (flashstart only)
     if (uiState.isLoadingVariants) {
-        Text("⏳ Lade Firmware-Versionen ...", style = MaterialTheme.typography.bodySmall)
+        Text(I18n.t("bu_loadingVariants"), style = MaterialTheme.typography.bodySmall)
     } else if (uiState.selectedDevice != null) {
         if (uiState.firmwareVariants.isEmpty()) {
             Text(
-                "Keine Flashstart-Version für dieses Gerät verfügbar.",
+                I18n.t("bu_noFlashstart"),
                 style = MaterialTheme.typography.bodySmall
             )
         } else {
@@ -495,11 +494,11 @@ private fun BusUpdaterCatalog(
                 OutlinedTextField(
                     value = uiState.selectedVariant?.let {
                         FirmwareCatalog.formatFirmwareName(it.name, it.hints)
-                    } ?: "Firmware wählen",
+                    } ?: I18n.t("bu_selectFirmware"),
                     onValueChange = {},
                     readOnly = true,
                     enabled = enabled,
-                    label = { Text("Firmware (Flashstart)") },
+                    label = { Text(I18n.t("bu_firmwareFlashstart")) },
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = varExpanded) },
                     modifier = Modifier.menuAnchor().fillMaxWidth()
                 )
@@ -516,7 +515,7 @@ private fun BusUpdaterCatalog(
                 onClick = { viewModel.loadSelectedCatalogFirmware() },
                 enabled = uiState.selectedVariant != null && !uiState.isBusy,
                 modifier = Modifier.fillMaxWidth()
-            ) { Text("Firmware laden") }
+            ) { Text(I18n.t("bu_loadFirmware")) }
         }
     }
 }

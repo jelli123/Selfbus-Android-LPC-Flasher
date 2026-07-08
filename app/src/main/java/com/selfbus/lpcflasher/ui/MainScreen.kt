@@ -40,6 +40,7 @@ fun MainScreen(
     val scope = rememberCoroutineScope()
     val clipboardManager = LocalClipboardManager.current
     var showSettings by remember { mutableStateOf(false) }
+    var showInfo by remember { mutableStateOf(false) }
 
     val t = I18n::t
 
@@ -64,6 +65,10 @@ fun MainScreen(
                     // Settings
                     IconButton(onClick = { showSettings = !showSettings }) {
                         Icon(Icons.Default.Settings, contentDescription = t("settings"))
+                    }
+                    // Info / about
+                    IconButton(onClick = { showInfo = true }) {
+                        Icon(Icons.Default.Info, contentDescription = t("about"))
                     }
                 }
             )
@@ -117,6 +122,11 @@ fun MainScreen(
             onConfirm = { viewModel.confirmSafetyAndFlash() },
             onDismiss = { viewModel.cancelSafetyDialog() }
         )
+    }
+
+    // ---- About Dialog ----
+    if (showInfo) {
+        AboutDialog(onDismiss = { showInfo = false })
     }
 }
 
