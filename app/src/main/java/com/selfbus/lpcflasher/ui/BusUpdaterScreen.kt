@@ -6,11 +6,13 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -27,6 +29,7 @@ fun BusUpdaterScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val log by viewModel.log.collectAsState()
+    var showInfo by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -45,6 +48,10 @@ fun BusUpdaterScreen(
                         )
                     }) {
                         Text(if (uiState.language == I18n.Lang.DE) "EN" else "DE")
+                    }
+                    // Info / about
+                    IconButton(onClick = { showInfo = true }) {
+                        Icon(Icons.Default.Info, contentDescription = I18n.t("about"))
                     }
                 }
             )
@@ -363,6 +370,47 @@ fun BusUpdaterScreen(
             )
         }
     }
+
+    if (showInfo) {
+        AboutDialog(onDismiss = { showInfo = false })
+    }
+}
+
+/**
+ * "About" popup showing the app version and Selfbus copyright.
+ */
+@Composable
+private fun AboutDialog(onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val versionName = try {
+        context.packageManager.getPackageInfo(context.packageName, 0).versionName
+    } catch (_: Exception) {
+        "?"
+    }
+    val year = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("OK") }
+        },
+        icon = { Icon(Icons.Default.Info, contentDescription = null) },
+        title = { Text("Selfbus Flasher") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Version v$versionName", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    "© $year selfbus.org",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Text(
+                    "https://selfbus.org",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+    )
 }
 
 /**

@@ -17,6 +17,7 @@ object I18n {
     private val EN = mapOf(
         "title" to "LPC11xx ISP Flasher",
         "subtitle" to "USB Serial firmware programmer for NXP LPC11xx",
+        "about" to "About",
         "disconnected" to "Disconnected",
         "connected" to "Connected",
         "firmware" to "Firmware",
@@ -240,6 +241,7 @@ object I18n {
     private val DE = mapOf(
         "title" to "LPC11xx ISP Flasher",
         "subtitle" to "USB Serial basierter Firmware-Programmer für NXP LPC11xx",
+        "about" to "Über",
         "disconnected" to "Nicht verbunden",
         "connected" to "Verbunden",
         "firmware" to "Firmware",
