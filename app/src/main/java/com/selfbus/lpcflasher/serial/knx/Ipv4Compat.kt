@@ -92,72 +92,77 @@ object Ipv4Compat {
         runCatching { java.net.InetSocketAddress(0).address is Inet4Address }.getOrDefault(false)
 
     /**
-     * Adaptively replace any cached "any-local" wildcard address with the IPv4
-     * wildcard `0.0.0.0`. The exact field/class names of libcore's InetAddress
-     * internals differ between Android versions (Android 17 dropped
-     * `java.net.Inet4AddressImpl`), so instead of hard-coding names we scan:
-     *   1. the current `InetAddressImpl` instance's InetAddress-typed fields, and
-     *   2. the static InetAddress-typed fields of `java.net.InetAddress` itself,
-     * and overwrite any that are null-and-wildcard-named or hold a non-IPv4
-     * any-local address. Only wildcard entries are touched; loopback / DNS stay
-     * intact. All discovered fields are logged for diagnostics.
+     * Replace libcore's cached IPv6 "any-local" wildcard with the IPv4 wildcard
+     * `0.0.0.0`.
+     *
+     * On Android 17 the impl is `java.net.Inet6AddressImpl` and its
+     * `anyLocalAddress()` method caches the wildcard *lazily* in a field. If we
+     * patch fields before that method has ever run, the lazy initialiser simply
+     * recreates the IPv6 wildcard afterwards (which is exactly what happened in
+     * earlier attempts). Therefore we:
+     *   1. invoke `anyLocalAddress()` once to force the lazy initialisation, then
+     *   2. overwrite every field (instance or static, across the hierarchy) that
+     *      now actually holds a non-IPv4 any-local address with the IPv4 wildcard.
+     * We match by value, not by name, so the field-layout changes across Android
+     * versions don't matter. All discovered fields are logged for diagnostics.
      */
     private fun patchAnyLocalAddress(ipv4Any: Inet4Address) {
-        // 1) Patch fields on the impl instance.
         val impl = readImpl()
-        if (impl != null) {
-            Log.i(TAG, "impl class = ${impl.javaClass.name}")
-            patchInetAddressFields(impl.javaClass, impl, ipv4Any, "impl")
-        } else {
+        if (impl == null) {
             Log.w(TAG, "InetAddress.impl not found")
+            return
         }
+        Log.i(TAG, "impl class = ${impl.javaClass.name}")
 
-        // 2) Patch static fields directly on InetAddress (some ports cache here).
-        patchInetAddressFields(InetAddress::class.java, null, ipv4Any, "InetAddress")
+        // 1) Force lazy initialisation of the cached wildcard address.
+        runCatching {
+            val m = impl.javaClass.getMethod("anyLocalAddress")
+            m.isAccessible = true
+            val v = m.invoke(impl) as? InetAddress
+            Log.i(TAG, "anyLocalAddress() before patch = ${v?.hostAddress} (${v?.javaClass?.simpleName})")
+        }.onFailure { Log.i(TAG, "anyLocalAddress() invoke skipped: ${it.message}") }
 
-        // 3) Patch static fields on the impl's own class (cached any-local).
-        if (impl != null) {
-            patchInetAddressFields(impl.javaClass, null, ipv4Any, "impl-static")
+        // 2) Overwrite every field that currently holds a non-IPv4 any-local addr.
+        patchWildcardFields(impl.javaClass, impl, ipv4Any, "impl")        // instance fields
+        patchWildcardFields(impl.javaClass, null, ipv4Any, "impl-static") // static fields
+        patchWildcardFields(InetAddress::class.java, null, ipv4Any, "InetAddress")
+
+        // 3) Verify by invoking the method again.
+        runCatching {
+            val m = impl.javaClass.getMethod("anyLocalAddress")
+            m.isAccessible = true
+            val v = m.invoke(impl) as? InetAddress
+            Log.i(TAG, "anyLocalAddress() after patch = ${v?.hostAddress} (${v?.javaClass?.simpleName})")
         }
     }
 
     /**
-     * For every declared field of [owner] that can hold an [Inet4Address],
-     * overwrite it with [ipv4Any] when it is currently null (and looks like a
-     * wildcard field) or holds a non-IPv4 any-local address.
+     * Overwrite every field of [owner] (walking the hierarchy) that currently
+     * holds a non-IPv4 any-local address with [ipv4Any]. Matches strictly by
+     * value, so only the IPv6 wildcard is replaced; loopback / DNS stay intact.
      */
-    private fun patchInetAddressFields(
+    private fun patchWildcardFields(
         owner: Class<*>,
         instance: Any?,
         ipv4Any: Inet4Address,
         label: String,
     ) {
-        // Walk the class hierarchy: the wildcard field may be declared in a superclass.
         var cls: Class<*>? = owner
         while (cls != null && cls != Any::class.java) {
             for (field in cls.declaredFields) {
-                // Only fields that can actually store an Inet4Address.
                 if (!field.type.isAssignableFrom(Inet4Address::class.java)) continue
                 val isStatic = java.lang.reflect.Modifier.isStatic(field.modifiers)
                 if ((instance == null) != isStatic) continue
                 runCatching {
                     field.isAccessible = true
                     val current = field.get(instance) as? InetAddress
-                    val nameHintsWildcard = field.name.contains("any", true) ||
-                        field.name.contains("wildcard", true) || field.name.contains("unspecified", true)
-                    val shouldPatch = when {
-                        current == null -> nameHintsWildcard
-                        current is Inet4Address -> false
-                        current.isAnyLocalAddress -> true
-                        else -> false
-                    }
-                    if (shouldPatch) {
+                    if (current != null && current !is Inet4Address && current.isAnyLocalAddress) {
                         field.set(instance, ipv4Any)
-                        Log.i(TAG, "$label: patched field '${field.name}' (${field.type.simpleName}) -> 0.0.0.0")
+                        Log.i(TAG, "$label: patched '${field.name}' (${current.hostAddress}) -> 0.0.0.0")
                     } else if (current != null) {
-                        Log.i(TAG, "$label: field '${field.name}' = ${current.hostAddress}")
+                        Log.i(TAG, "$label: '${field.name}' = ${current.hostAddress}")
                     }
-                }.onFailure { Log.i(TAG, "$label: field '${field.name}' skip (${it.message})") }
+                }.onFailure { Log.i(TAG, "$label: '${field.name}' skip (${it.message})") }
             }
             cls = cls.superclass
         }
