@@ -39,17 +39,27 @@ object Ipv4Compat {
         if (applied) return
         applied = true
 
+        Log.i(TAG, "Android SDK ${android.os.Build.VERSION.SDK_INT} (${android.os.Build.VERSION.RELEASE})")
+
         if (wildcardIsIpv4()) {
             Log.i(TAG, "IPv4 wildcard already active")
             return
         }
 
-        // Lift hidden-API restrictions for this process (Android 9-15). An empty
-        // prefix exempts every hidden API, so the java.net reflection below works.
+        // Lift hidden-API restrictions for this process. An empty prefix exempts
+        // every hidden API, so the java.net reflection below is permitted.
         val exempted = runCatching { HiddenApiBypass.addHiddenApiExemptions("") }
             .getOrDefault(false)
         if (!exempted) {
-            Log.w(TAG, "HiddenApiBypass could not lift hidden-API restrictions")
+            Log.w(TAG, "HiddenApiBypass.addHiddenApiExemptions returned false")
+        }
+        // Belt-and-suspenders: once the bypass lifted the restriction, the direct
+        // VMRuntime call also works and covers cases the library return value lied about.
+        runCatching {
+            val vmRuntimeClass = Class.forName("dalvik.system.VMRuntime")
+            val vmRuntime = vmRuntimeClass.getDeclaredMethod("getRuntime").invoke(null)
+            vmRuntimeClass.getDeclaredMethod("setHiddenApiExemptions", Array<String>::class.java)
+                .invoke(vmRuntime, arrayOf("L"))
         }
 
         val ipv4Any = InetAddress.getByAddress(byteArrayOf(0, 0, 0, 0)) as? Inet4Address

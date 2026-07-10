@@ -14,7 +14,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = 1
-        versionName = "0.1.10-alpha"
+        versionName = "0.1.11-alpha"
     }
 
     buildTypes {
@@ -88,9 +88,9 @@ dependencies {
     implementation("org.slf4j:slf4j-api:2.0.17")
 
     // Hidden-API bypass: needed to force calimero's KNXnet/IP layer to use the
-    // IPv4 wildcard on dual-stack devices (see Ipv4Compat). Reaches
-    // VMRuntime.setHiddenApiExemptions on Android 9-15, which is otherwise blocked.
-    implementation("org.lsposed.hiddenapibypass:hiddenapibypass:4.3")
+    // IPv4 wildcard on dual-stack devices (see Ipv4Compat). Reaches the blocked
+    // java.net internals on modern Android (incl. Android 15+/targetSdk 35).
+    implementation("org.lsposed.hiddenapibypass:hiddenapibypass:6.1")
 
     // Java 8+ API desugaring (java.time, java.util.zip used by KNX layer)
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
