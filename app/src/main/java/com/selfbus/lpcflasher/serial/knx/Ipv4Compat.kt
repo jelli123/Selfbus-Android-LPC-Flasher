@@ -68,23 +68,68 @@ object Ipv4Compat {
             return
         }
 
-        // Adaptively replace any cached wildcard address with the IPv4 wildcard.
+        // THE fix: Android's `new InetSocketAddress(int port)` constructor is
+        // hard-coded to use the constant `Inet6Address.ANY` (::) as the wildcard
+        // address (see AOSP InetSocketAddress: `addr == null ? Inet6Address.ANY`).
+        // It does NOT consult impl.anyLocalAddress(). Since `Inet6Address.ANY` is
+        // declared as `public static final InetAddress ANY` (type InetAddress, not
+        // Inet6Address) and is not a compile-time constant, we can reflectively
+        // overwrite it with the IPv4 wildcard so calimero's HPAI (which requires an
+        // Inet4Address) no longer throws during its static initialisation.
+        runCatching { patchInet6AddressAny(ipv4Any) }
+            .onFailure { Log.w(TAG, "patchInet6AddressAny failed: ${it.message}") }
+
+        // Secondary: also fix impl.anyLocalAddress() for any code path that uses it.
         runCatching { patchAnyLocalAddress(ipv4Any) }
             .onFailure { Log.w(TAG, "patchAnyLocalAddress failed: ${it.message}") }
-
-        // Most robust fallback: wrap InetAddress.impl in a proxy whose
-        // anyLocalAddress() returns IPv4. Depends only on the stable interface
-        // method name, not on the field layout that changed in Android 17.
-        if (!wildcardIsIpv4()) {
-            runCatching { installIpv4ImplProxy(ipv4Any) }
-                .onFailure { Log.w(TAG, "installIpv4ImplProxy failed: ${it.message}") }
-        }
 
         if (wildcardIsIpv4()) {
             Log.i(TAG, "IPv4 wildcard active")
         } else {
             Log.w(TAG, "IPv4 wildcard could NOT be enforced; calimero may crash on HPAI init")
         }
+    }
+
+    /**
+     * Overwrite `java.net.Inet6Address.ANY` (the wildcard used by
+     * `new InetSocketAddress(int)`) with the IPv4 wildcard `0.0.0.0`.
+     * The field is `static final` but holds an object (not a constant), so on ART
+     * it can be set after `setAccessible(true)`; a `sun.misc.Unsafe` fallback is
+     * used if the direct set is rejected.
+     */
+    private fun patchInet6AddressAny(ipv4Any: Inet4Address) {
+        val inet6Class = Class.forName("java.net.Inet6Address")
+        val anyField = inet6Class.getDeclaredField("ANY")
+        anyField.isAccessible = true
+
+        val before = anyField.get(null) as? InetAddress
+        Log.i(TAG, "Inet6Address.ANY before = ${before?.hostAddress} (${before?.javaClass?.simpleName})")
+
+        // Try direct reflective set first.
+        runCatching { anyField.set(null, ipv4Any) }
+            .onFailure { Log.i(TAG, "direct set of ANY failed (${it.message}), trying Unsafe") }
+
+        var now = anyField.get(null) as? InetAddress
+        if (now !is Inet4Address) {
+            // Fallback: sun.misc.Unsafe static-field put, bypassing final checks.
+            runCatching {
+                val unsafeClass = Class.forName("sun.misc.Unsafe")
+                val theUnsafe = unsafeClass.getDeclaredField("theUnsafe")
+                theUnsafe.isAccessible = true
+                val unsafe = theUnsafe.get(null)
+                val staticBase = unsafeClass
+                    .getMethod("staticFieldBase", java.lang.reflect.Field::class.java)
+                    .invoke(unsafe, anyField)
+                val staticOffset = unsafeClass
+                    .getMethod("staticFieldOffset", java.lang.reflect.Field::class.java)
+                    .invoke(unsafe, anyField) as Long
+                unsafeClass.getMethod(
+                    "putObject", Any::class.java, Long::class.javaPrimitiveType, Any::class.java
+                ).invoke(unsafe, staticBase, staticOffset, ipv4Any)
+            }.onFailure { Log.w(TAG, "Unsafe put of ANY failed: ${it.message}") }
+            now = anyField.get(null) as? InetAddress
+        }
+        Log.i(TAG, "Inet6Address.ANY after = ${now?.hostAddress} (${now?.javaClass?.simpleName})")
     }
 
     /** Whether `new java.net.InetSocketAddress(0)` currently yields an IPv4 address. */
@@ -186,41 +231,5 @@ object Ipv4Compat {
             }
         }
         return null
-    }
-
-    /**
-     * Replace the static `InetAddress.impl` with a dynamic proxy that delegates
-     * every call to the real implementation except `anyLocalAddress()`, which
-     * returns the IPv4 wildcard. This only relies on the (stable) package-private
-     * `java.net.InetAddressImpl` interface and its `anyLocalAddress` method name,
-     * so it survives the field-layout changes introduced in Android 17.
-     */
-    private fun installIpv4ImplProxy(ipv4Any: Inet4Address) {
-        val implField = InetAddress::class.java.getDeclaredField("impl")
-        implField.isAccessible = true
-        val realImpl = implField.get(null) ?: run {
-            Log.w(TAG, "cannot proxy: InetAddress.impl is null")
-            return
-        }
-        val implInterface = realImpl.javaClass.interfaces.firstOrNull {
-            it.name.contains("InetAddressImpl")
-        }
-        if (implInterface == null) {
-            Log.w(TAG, "cannot proxy: InetAddressImpl interface not found on ${realImpl.javaClass.name}")
-            return
-        }
-        val proxy = java.lang.reflect.Proxy.newProxyInstance(
-            implInterface.classLoader,
-            arrayOf(implInterface),
-        ) { _, method, args ->
-            if (method.name == "anyLocalAddress" && method.parameterTypes.isEmpty()) {
-                ipv4Any
-            } else {
-                @Suppress("SpreadOperator")
-                if (args == null) method.invoke(realImpl) else method.invoke(realImpl, *args)
-            }
-        }
-        implField.set(null, proxy)
-        Log.i(TAG, "installed IPv4 InetAddressImpl proxy for ${implInterface.name}")
     }
 }
