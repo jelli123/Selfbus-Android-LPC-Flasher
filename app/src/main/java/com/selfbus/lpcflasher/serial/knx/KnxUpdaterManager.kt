@@ -19,6 +19,7 @@ import tuwien.auto.calimero.mgmt.TransportLayer
 import tuwien.auto.calimero.mgmt.TransportLayerImpl
 import tuwien.auto.calimero.mgmt.TransportListener
 import java.net.Inet4Address
+import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.util.concurrent.ArrayBlockingQueue
@@ -140,23 +141,33 @@ class KnxUpdaterManager(
         val found = LinkedHashMap<String, GatewayInfo>()
         try {
             val discoverer = Discoverer(0, false)
-            // NOTE: Discoverer.startSearch(timeout, wait) internally calls
-            // NetworkInterface.networkInterfaces() (a Java 9 API only available on
-            // Android 13+ / API 33). To stay compatible with our minSdk 26 we
-            // enumerate interfaces the classic way and use the per-interface
-            // startSearch overload, which avoids that call.
-            val interfaces = usableMulticastInterfaces()
-            if (interfaces.isEmpty()) {
-                // Fall back to the default multicast interface (null).
-                runCatching { discoverer.startSearch(null, timeoutSeconds, false) }
-            } else {
-                for (ni in interfaces) {
-                    runCatching { discoverer.startSearch(ni, timeoutSeconds, false) }
+            // NOTE: Discoverer.startSearch(timeout, wait) (search on "all" interfaces)
+            // internally calls NetworkInterface.networkInterfaces() (a Java 9 API only
+            // available on Android 13+ / API 33). With minSdk 26 that throws
+            // NoSuchMethodError. We therefore enumerate interfaces the classic way
+            // (getNetworkInterfaces(), all API levels) and use the per-interface
+            // startSearch(ni, timeout, wait) overload, which never calls that method.
+            val interfaces = usableInterfaces()
+            var started = false
+            for (ni in interfaces) {
+                try {
+                    discoverer.startSearch(ni, timeoutSeconds, false)
+                    started = true
+                } catch (e: Exception) {
+                    log("KNX: Suche auf ${ni.name} nicht möglich: ${e.message}")
                 }
+            }
+            if (!started) {
+                // Do NOT fall back to startSearch(null, ...): with a null interface
+                // calimero binds to InetAddress.getLocalHost(), which on Android is
+                // usually 127.0.0.1 and never receives any gateway responses.
+                throw KnxUpdaterException(
+                    "Keine geeignete Netzwerkschnittstelle gefunden. Ist WLAN aktiv und mit dem KNX-Netz verbunden?"
+                )
             }
             // Wait for the background receivers to collect responses.
             try {
-                Thread.sleep(timeoutSeconds * 1000L + 500L)
+                Thread.sleep(timeoutSeconds * 1000L + 800L)
             } catch (_: InterruptedException) {
                 Thread.currentThread().interrupt()
             }
@@ -175,6 +186,8 @@ class KnxUpdaterManager(
                 val name = runCatching { response.device.name }.getOrNull() ?: "KNX IP Gateway"
                 found.putIfAbsent("$ip:$port", GatewayInfo(name, ip, port))
             }
+        } catch (ex: KnxUpdaterException) {
+            throw ex
         } catch (ex: Exception) {
             throw KnxUpdaterException("Gateway-Suche fehlgeschlagen: ${ex.message}")
         } finally {
@@ -184,18 +197,63 @@ class KnxUpdaterManager(
         return found.values.toList()
     }
 
-    /** Network interfaces that are up, multicast-capable and carry an IPv4 address. */
-    private fun usableMulticastInterfaces(): List<NetworkInterface> {
+    /**
+     * Network interfaces that are up, not loopback and carry a usable IPv4 address.
+     * We intentionally do NOT require supportsMulticast(): several Android devices
+     * report false for the Wi-Fi interface even though multicast works, and the
+     * MulticastLock we hold enables reception anyway.
+     */
+    private fun usableInterfaces(): List<NetworkInterface> {
         return try {
             NetworkInterface.getNetworkInterfaces().toList().filter { ni ->
                 runCatching {
-                    ni.isUp && !ni.isLoopback && ni.supportsMulticast() &&
-                        ni.inetAddresses.toList().any { it is Inet4Address && !it.isAnyLocalAddress }
+                    ni.isUp && !ni.isLoopback &&
+                        ni.inetAddresses.toList().any {
+                            it is Inet4Address && !it.isAnyLocalAddress && !it.isLoopbackAddress
+                        }
                 }.getOrDefault(false)
             }
         } catch (_: Exception) {
             emptyList()
         }
+    }
+
+    /**
+     * Best-effort local IPv4 address to bind outgoing KNXnet/IP connections to.
+     * Prefers an address on the same subnet as [remote]; otherwise the first
+     * non-loopback IPv4. Uses the legacy Enumeration API so it works below API 33.
+     */
+    private fun localIpv4For(remote: InetAddress?): InetAddress? {
+        return try {
+            var fallback: InetAddress? = null
+            for (ni in NetworkInterface.getNetworkInterfaces()) {
+                if (!runCatching { ni.isUp && !ni.isLoopback }.getOrDefault(false)) continue
+                for (ia in ni.interfaceAddresses) {
+                    val addr = ia.address
+                    if (addr !is Inet4Address || addr.isAnyLocalAddress || addr.isLoopbackAddress) continue
+                    if (fallback == null) fallback = addr
+                    if (remote != null && matchesPrefix(addr, ia.networkPrefixLength.toInt(), remote)) {
+                        return addr
+                    }
+                }
+            }
+            fallback
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** IPv4 subnet-prefix match (mirrors calimero's Net.matchesPrefix). */
+    private fun matchesPrefix(local: InetAddress, maskLength: Int, remote: InetAddress): Boolean {
+        val a1 = local.address
+        val a2 = remote.address
+        if (a1.size != a2.size || maskLength !in 0..32) return false
+        val mask = (0xffffffffL ushr maskLength) xor 0xffffffffL
+        for (i in a1.indices) {
+            val byteMask = ((mask shr (24 - 8 * i)) and 0xff).toInt()
+            if ((a1[i].toInt() and byteMask) != (a2[i].toInt() and byteMask)) return false
+        }
+        return true
     }
 
     // ---------------------------------------------------------------------
@@ -207,8 +265,15 @@ class KnxUpdaterManager(
         disconnect()
         this.ownAddress = ownAddress
         log("KNX: Verbinde mit Gateway $gatewayIp:$port ...")
-        val localEp = InetSocketAddress(0)
         val remoteEp = InetSocketAddress(gatewayIp, port)
+        // calimero's ClientConnection.connect() resolves a wildcard local endpoint via
+        // Net.matchRemoteEndpoint() -> Net.onSameSubnet() -> NetworkInterface.networkInterfaces()
+        // (a Java 9 API only available on Android 13+ / API 33). With minSdk 26 that
+        // throws NoSuchMethodError. Passing a concrete local IPv4 makes
+        // matchRemoteEndpoint() return early (it only resolves wildcard addresses),
+        // avoiding that call entirely.
+        val localAddr = localIpv4For(remoteEp.address)
+        val localEp = if (localAddr != null) InetSocketAddress(localAddr, 0) else InetSocketAddress(0)
         val settings = TPSettings(IndividualAddress(ownAddress))
         link = try {
             KNXNetworkLinkIP.newTunnelingLink(localEp, remoteEp, false, settings)
