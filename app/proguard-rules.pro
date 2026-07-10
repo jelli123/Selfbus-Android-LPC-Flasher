@@ -10,3 +10,9 @@
 # calimero KNX stack uses reflection in a few places
 -keep class tuwien.auto.calimero.** { *; }
 -dontwarn tuwien.auto.calimero.**
+
+# Hidden-API bypass (reflects on platform internals). Keep it and don't warn on
+# the platform classes it references.
+-keep class org.lsposed.hiddenapibypass.** { *; }
+-dontwarn org.lsposed.hiddenapibypass.**
+-keep class com.selfbus.lpcflasher.serial.knx.Ipv4Compat { *; }

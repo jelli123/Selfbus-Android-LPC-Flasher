@@ -1,7 +1,7 @@
 package com.selfbus.lpcflasher.serial.knx
 
 import android.util.Log
-import java.lang.reflect.Modifier
+import org.lsposed.hiddenapibypass.HiddenApiBypass
 import java.net.Inet4Address
 import java.net.InetAddress
 
@@ -17,10 +17,14 @@ import java.net.InetAddress
  * search and connect attempt.
  *
  * Android/libcore ignores the `java.net.preferIPv4Stack` system property (the
- * choice of IPv4/IPv6 wildcard is made natively via `isIPv6Supported()`), so the
- * only reliable fix is to force `InetAddress.anyLocalAddress()` to return the
- * IPv4 wildcard `0.0.0.0` via reflection, *before* calimero's HPAI class is
- * loaded.
+ * IPv4/IPv6 wildcard choice is made natively via `isIPv6Supported()`), and on
+ * targetSdk 35 direct reflection on `InetAddress.impl` /
+ * `VMRuntime.setHiddenApiExemptions` is blocked by hidden-API enforcement.
+ *
+ * We therefore use LSPosed's [HiddenApiBypass] to lift the hidden-API
+ * restriction for this process, then overwrite the cached `anyLocalAddress`
+ * field of the current `InetAddressImpl` with the IPv4 wildcard `0.0.0.0`,
+ * *before* calimero's HPAI class is loaded.
  */
 object Ipv4Compat {
 
@@ -34,9 +38,19 @@ object Ipv4Compat {
     fun forceIpv4Wildcard() {
         if (applied) return
         applied = true
-        // libcore's java.net.* internals are hidden API on Android 9+; lift the
-        // restriction for this process so the reflection below is allowed.
-        relaxHiddenApiChecks()
+
+        if (wildcardIsIpv4()) {
+            Log.i(TAG, "IPv4 wildcard already active")
+            return
+        }
+
+        // Lift hidden-API restrictions for this process (Android 9-15). An empty
+        // prefix exempts every hidden API, so the java.net reflection below works.
+        val exempted = runCatching { HiddenApiBypass.addHiddenApiExemptions("") }
+            .getOrDefault(false)
+        if (!exempted) {
+            Log.w(TAG, "HiddenApiBypass could not lift hidden-API restrictions")
+        }
 
         val ipv4Any = InetAddress.getByAddress(byteArrayOf(0, 0, 0, 0)) as? Inet4Address
         if (ipv4Any == null) {
@@ -44,17 +58,14 @@ object Ipv4Compat {
             return
         }
 
-        // Preferred fix: replace the cached wildcard address held by the current
-        // InetAddressImpl instance so any future new InetSocketAddress(0) is IPv4.
-        val patchedImpl = runCatching { patchImplWildcard(ipv4Any) }.getOrDefault(false)
-        if (patchedImpl) {
-            Log.i(TAG, "patched InetAddressImpl wildcard to IPv4")
-        }
+        // Preferred: replace only the cached wildcard address of the current impl.
+        runCatching { patchAnyLocalAddress(ipv4Any) }
+            .onFailure { Log.w(TAG, "patchAnyLocalAddress failed: ${it.message}") }
 
-        // Verify; if the wildcard is still IPv6, try swapping the whole impl.
+        // Fallback: swap the whole impl to an IPv4-only implementation.
         if (!wildcardIsIpv4()) {
-            val swapped = runCatching { swapImplToIpv4() }.getOrDefault(false)
-            if (swapped) Log.i(TAG, "swapped InetAddress.impl to Inet4AddressImpl")
+            runCatching { swapImplToIpv4() }
+                .onFailure { Log.w(TAG, "swapImplToIpv4 failed: ${it.message}") }
         }
 
         if (wildcardIsIpv4()) {
@@ -68,64 +79,34 @@ object Ipv4Compat {
     private fun wildcardIsIpv4(): Boolean =
         runCatching { java.net.InetSocketAddress(0).address is Inet4Address }.getOrDefault(false)
 
-    /** Overwrite the cached `anyLocalAddress` field on the current InetAddressImpl. */
-    private fun patchImplWildcard(ipv4Any: Inet4Address): Boolean {
-        val impl = readImpl() ?: return false
-        var patched = false
+    /**
+     * Overwrite the cached `anyLocalAddress` field on the current InetAddressImpl
+     * with the IPv4 wildcard. Only the wildcard field is touched; loopback and
+     * DNS resolution stay untouched.
+     */
+    private fun patchAnyLocalAddress(ipv4Any: Inet4Address) {
+        val impl = readImpl() ?: return
         for (field in impl.javaClass.declaredFields) {
+            if (!field.name.equals("anyLocalAddress", ignoreCase = true)) continue
             if (!InetAddress::class.java.isAssignableFrom(field.type)) continue
-            runCatching {
-                field.isAccessible = true
-                val current = field.get(impl) as? InetAddress
-                // Only replace wildcard / IPv6 entries, leave IPv4 ones untouched.
-                if (current == null || current !is Inet4Address) {
-                    field.set(impl, ipv4Any)
-                    patched = true
-                }
-            }
+            field.isAccessible = true
+            field.set(impl, ipv4Any)
         }
-        return patched
     }
 
-    /** Replace the whole `InetAddress.impl` with a fresh Inet4AddressImpl. */
-    private fun swapImplToIpv4(): Boolean {
+    /** Replace the whole static `InetAddress.impl` with a fresh Inet4AddressImpl. */
+    private fun swapImplToIpv4() {
         val implField = InetAddress::class.java.getDeclaredField("impl")
         implField.isAccessible = true
-        // Drop the `final` modifier if present (ART generally allows this).
-        runCatching {
-            val modifiers = java.lang.reflect.Field::class.java.getDeclaredField("accessFlags")
-            modifiers.isAccessible = true
-            modifiers.setInt(implField, implField.modifiers and Modifier.FINAL.inv())
-        }
         val inet4ImplClass = Class.forName("java.net.Inet4AddressImpl")
         val ctor = inet4ImplClass.getDeclaredConstructor()
         ctor.isAccessible = true
-        val inet4Impl = ctor.newInstance()
-        implField.set(null, inet4Impl)
-        return true
+        implField.set(null, ctor.newInstance())
     }
 
     private fun readImpl(): Any? {
         val implField = InetAddress::class.java.getDeclaredField("impl")
         implField.isAccessible = true
         return implField.get(null)
-    }
-
-    /**
-     * Lift Android's hidden-API restrictions for this process so reflection on
-     * `java.net` internals is permitted. No-op on Android < 9 or if unavailable.
-     */
-    private fun relaxHiddenApiChecks() {
-        runCatching {
-            val vmRuntimeClass = Class.forName("dalvik.system.VMRuntime")
-            val getRuntime = vmRuntimeClass.getDeclaredMethod("getRuntime")
-            getRuntime.isAccessible = true
-            val vmRuntime = getRuntime.invoke(null)
-            val setExemptions = vmRuntimeClass.getDeclaredMethod(
-                "setHiddenApiExemptions", Array<String>::class.java
-            )
-            setExemptions.isAccessible = true
-            setExemptions.invoke(vmRuntime, arrayOf("L"))
-        }
     }
 }
