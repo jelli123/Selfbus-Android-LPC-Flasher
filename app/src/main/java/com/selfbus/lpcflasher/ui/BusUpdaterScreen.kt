@@ -266,7 +266,7 @@ fun BusUpdaterScreen(
                     // Firmware catalog (only bootloader-based "flashstart" versions)
                     BusUpdaterCatalog(uiState, viewModel)
 
-                    Divider()
+                    HorizontalDivider()
 
                     uiState.firmwareFileName?.let {
                         Text(
@@ -318,7 +318,7 @@ fun BusUpdaterScreen(
             if (uiState.progress >= 0) {
                 Column {
                     LinearProgressIndicator(
-                        progress = (uiState.progress / 100f).coerceIn(0f, 1f),
+                        progress = { (uiState.progress / 100f).coerceIn(0f, 1f) },
                         modifier = Modifier.fillMaxWidth().height(8.dp)
                     )
                     Text("${uiState.progress}%", style = MaterialTheme.typography.bodySmall)
@@ -466,7 +466,7 @@ private fun BusUpdaterCatalog(
             enabled = enabled,
             label = { Text(I18n.t("category")) },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = catExpanded) },
-            modifier = Modifier.menuAnchor().fillMaxWidth()
+            modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable, enabled).fillMaxWidth()
         )
         ExposedDropdownMenu(expanded = catExpanded, onDismissRequest = { catExpanded = false }) {
             uiState.categories.forEach { (key, cat) ->
@@ -493,7 +493,7 @@ private fun BusUpdaterCatalog(
                 enabled = enabled,
                 label = { Text(I18n.t("device")) },
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = devExpanded) },
-                modifier = Modifier.menuAnchor().fillMaxWidth()
+                modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable, enabled).fillMaxWidth()
             )
             ExposedDropdownMenu(expanded = devExpanded, onDismissRequest = { devExpanded = false }) {
                 uiState.devices.forEach { (id, dev) ->
@@ -527,7 +527,7 @@ private fun BusUpdaterCatalog(
                     enabled = enabled,
                     label = { Text(I18n.t("bu_firmwareFlashstart")) },
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = varExpanded) },
-                    modifier = Modifier.menuAnchor().fillMaxWidth()
+                    modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable, enabled).fillMaxWidth()
                 )
                 ExposedDropdownMenu(expanded = varExpanded, onDismissRequest = { varExpanded = false }) {
                     uiState.firmwareVariants.forEach { file ->

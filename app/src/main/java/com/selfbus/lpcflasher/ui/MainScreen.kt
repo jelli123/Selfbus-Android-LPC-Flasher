@@ -98,7 +98,7 @@ fun MainScreen(
             AnimatedVisibility(uiState.progress >= 0) {
                 Column {
                     LinearProgressIndicator(
-                        progress = (uiState.progress / 100f).coerceIn(0f, 1f),
+                        progress = { (uiState.progress / 100f).coerceIn(0f, 1f) },
                         modifier = Modifier.fillMaxWidth().height(8.dp)
                     )
                     Text("${uiState.progress}%", style = MaterialTheme.typography.bodySmall)
@@ -212,7 +212,7 @@ fun ConnectionSection(
                             readOnly = true,
                             label = { Text(t("device")) },
                             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-                            modifier = Modifier.menuAnchor().fillMaxWidth()
+                            modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth()
                         )
                         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                             uiState.availableDevices.forEachIndexed { index, (_, name) ->
@@ -321,7 +321,7 @@ fun CatalogSection(
                     readOnly = true,
                     label = { Text(t("category")) },
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = catExpanded) },
-                    modifier = Modifier.menuAnchor().fillMaxWidth()
+                    modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth()
                 )
                 ExposedDropdownMenu(expanded = catExpanded, onDismissRequest = { catExpanded = false }) {
                     uiState.categories.forEach { (key, cat) ->
@@ -347,7 +347,7 @@ fun CatalogSection(
                         readOnly = true,
                         label = { Text(t("device")) },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = devExpanded) },
-                        modifier = Modifier.menuAnchor().fillMaxWidth()
+                        modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth()
                     )
                     ExposedDropdownMenu(expanded = devExpanded, onDismissRequest = { devExpanded = false }) {
                         uiState.devices.forEach { (id, dev) ->
@@ -374,7 +374,7 @@ fun CatalogSection(
                         readOnly = true,
                         label = { Text(t("firmware")) },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = varExpanded) },
-                        modifier = Modifier.menuAnchor().fillMaxWidth()
+                        modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth()
                     )
                     ExposedDropdownMenu(expanded = varExpanded, onDismissRequest = { varExpanded = false }) {
                         uiState.firmwareVariants.forEach { file ->
@@ -523,6 +523,7 @@ fun LogSection(
 ) {
     val t = I18n::t
     val listState = rememberLazyListState()
+    val context = androidx.compose.ui.platform.LocalContext.current
     val filteredEntries = if (debugVisible) logEntries
         else logEntries.filter { it.type != Logger.LogType.DEBUG }
 
@@ -546,6 +547,15 @@ fun LogSection(
                     Logger.success(I18n.t("logSaved"))
                 }, modifier = Modifier.size(32.dp)) {
                     Icon(Icons.Default.Save, contentDescription = t("saveLog"), modifier = Modifier.size(18.dp))
+                }
+                IconButton(onClick = {
+                    val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(android.content.Intent.EXTRA_TEXT, viewModel.getLogText())
+                    }
+                    context.startActivity(android.content.Intent.createChooser(send, t("shareLog")))
+                }, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Default.Share, contentDescription = t("shareLog"), modifier = Modifier.size(18.dp))
                 }
                 IconButton(onClick = { viewModel.clearLog() }, modifier = Modifier.size(32.dp)) {
                     Icon(Icons.Default.Delete, contentDescription = t("clearLog"), modifier = Modifier.size(18.dp))
@@ -666,7 +676,7 @@ fun SettingsSection(viewModel: FlasherViewModel) {
                 Settings.readLineDelay = it.toIntOrNull() ?: 1
             }
 
-            Divider()
+            HorizontalDivider()
             val context = androidx.compose.ui.platform.LocalContext.current
             val versionName = try {
                 context.packageManager.getPackageInfo(context.packageName, 0).versionName

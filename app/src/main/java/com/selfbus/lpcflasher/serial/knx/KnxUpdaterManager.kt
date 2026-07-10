@@ -18,7 +18,9 @@ import tuwien.auto.calimero.mgmt.ManagementClientImpl
 import tuwien.auto.calimero.mgmt.TransportLayer
 import tuwien.auto.calimero.mgmt.TransportLayerImpl
 import tuwien.auto.calimero.mgmt.TransportListener
+import java.net.Inet4Address
 import java.net.InetSocketAddress
+import java.net.NetworkInterface
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.TimeUnit
 
@@ -138,9 +140,30 @@ class KnxUpdaterManager(
         val found = LinkedHashMap<String, GatewayInfo>()
         try {
             val discoverer = Discoverer(0, false)
-            discoverer.startSearch(timeoutSeconds, true)
+            // NOTE: Discoverer.startSearch(timeout, wait) internally calls
+            // NetworkInterface.networkInterfaces() (a Java 9 API only available on
+            // Android 13+ / API 33). To stay compatible with our minSdk 26 we
+            // enumerate interfaces the classic way and use the per-interface
+            // startSearch overload, which avoids that call.
+            val interfaces = usableMulticastInterfaces()
+            if (interfaces.isEmpty()) {
+                // Fall back to the default multicast interface (null).
+                runCatching { discoverer.startSearch(null, timeoutSeconds, false) }
+            } else {
+                for (ni in interfaces) {
+                    runCatching { discoverer.startSearch(ni, timeoutSeconds, false) }
+                }
+            }
+            // Wait for the background receivers to collect responses.
+            try {
+                Thread.sleep(timeoutSeconds * 1000L + 500L)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+            runCatching { discoverer.stopSearch() }
+
             for (result in discoverer.getSearchResponses()) {
-                val response = result.response
+                val response = result.response()
                 val ctrl = response.controlEndpoint
                 var ip = ctrl.address?.hostAddress
                 // Fall back to the sender endpoint when the HPAI carries a wildcard (NAT).
@@ -159,6 +182,20 @@ class KnxUpdaterManager(
         }
         log("KNX: ${found.size} Gateway(s) gefunden")
         return found.values.toList()
+    }
+
+    /** Network interfaces that are up, multicast-capable and carry an IPv4 address. */
+    private fun usableMulticastInterfaces(): List<NetworkInterface> {
+        return try {
+            NetworkInterface.getNetworkInterfaces().toList().filter { ni ->
+                runCatching {
+                    ni.isUp && !ni.isLoopback && ni.supportsMulticast() &&
+                        ni.inetAddresses.toList().any { it is Inet4Address && !it.isAnyLocalAddress }
+                }.getOrDefault(false)
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
     }
 
     // ---------------------------------------------------------------------

@@ -1,5 +1,9 @@
 package com.selfbus.lpcflasher.data
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+
 /**
  * Internationalization – full port of i18n.js translations object.
  * Supports EN and DE for all user-visible strings.
@@ -8,7 +12,11 @@ object I18n {
 
     enum class Lang { EN, DE }
 
-    var currentLanguage: Lang = Lang.EN
+    /**
+     * Backed by Compose state so that any @Composable calling [t] recomposes
+     * automatically when the language changes.
+     */
+    var currentLanguage: Lang by mutableStateOf(Lang.EN)
 
     fun t(key: String): String =
         (if (currentLanguage == Lang.DE) DE[key] else null) ?: EN[key] ?: key
@@ -257,6 +265,7 @@ object I18n {
         "flash" to "Flash",
         "copyLog" to "Copy Log",
         "saveLog" to "Save Log",
+        "shareLog" to "Share Log",
         "clearLog" to "Clear Log",
         "baudRate" to "Baud Rate",
         "oscillator" to "Oscillator (kHz)",
@@ -528,6 +537,7 @@ object I18n {
         "flash" to "Flashen",
         "copyLog" to "Log kopieren",
         "saveLog" to "Log speichern",
+        "shareLog" to "Log teilen",
         "clearLog" to "Log löschen",
         "baudRate" to "Baudrate",
         "oscillator" to "Oszillator (kHz)",
