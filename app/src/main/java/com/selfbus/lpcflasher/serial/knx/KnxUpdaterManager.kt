@@ -213,36 +213,14 @@ class KnxUpdaterManager(
      * (programming button pressed). Uses a temporary management client that is
      * detached afterwards without closing the link.
      */
-    fun findDevicesInProgrammingMode(timeoutSeconds: Int = 3): List<String> {
+    fun findDevicesInProgrammingMode(): List<String> {
         val currentLink = link ?: throw KnxUpdaterException("Kein Gateway verbunden")
         log("KNX: Suche Gerät im Programmiermodus ...")
         val mc = ManagementClientImpl(currentLink)
         return try {
-            mc.responseTimeout = timeoutSeconds
             mc.readAddress(false).map { it.toString() }
         } catch (ex: Exception) {
             emptyList()
-        } finally {
-            runCatching { mc.detach() }
-        }
-    }
-
-    /**
-     * Read the individual address of the device with the given 6-byte KNX serial
-     * number. Returns null if no device answered.
-     */
-    fun findDeviceBySerial(serial6: ByteArray, timeoutSeconds: Int = 3): String? {
-        if (serial6.size != 6) {
-            throw KnxUpdaterException("Ungültige KNX-Seriennummer (${serial6.size} statt 6 Bytes)")
-        }
-        val currentLink = link ?: throw KnxUpdaterException("Kein Gateway verbunden")
-        log("KNX: Suche Gerät über Seriennummer ...")
-        val mc = ManagementClientImpl(currentLink)
-        return try {
-            mc.responseTimeout = timeoutSeconds
-            mc.readAddress(serial6).toString()
-        } catch (ex: Exception) {
-            null
         } finally {
             runCatching { mc.detach() }
         }
@@ -312,7 +290,7 @@ class KnxUpdaterManager(
         val asdu = ByteArray(1 + data.size)
         asdu[0] = command.byte
         System.arraycopy(data, 0, asdu, 1, data.size)
-        val apdu = DataUnitBuilder.createAPDU(APCI_USERMSG_WRITE, asdu)
+        val apdu = DataUnitBuilder.createAPDU(APCI_USERMSG_WRITE, *asdu)
         tl.sendData(dst, Priority.SYSTEM, apdu)
         return responses.poll(timeoutMs, TimeUnit.MILLISECONDS)
             ?: throw KnxUpdaterException("Keine Antwort auf ${command.name} (Timeout)")
@@ -432,7 +410,7 @@ class KnxUpdaterManager(
             val tl = transport ?: return
             val dst = destination ?: return
             // A_Restart (basic) — APCI 0x0380, no ASDU
-            val apdu = DataUnitBuilder.createAPDU(0x0380, byteArrayOf())
+            val apdu = DataUnitBuilder.createAPDU(0x0380)
             tl.sendData(dst, Priority.SYSTEM, apdu)
             log("KNX: Neustart-Befehl gesendet")
         } catch (ex: Exception) {

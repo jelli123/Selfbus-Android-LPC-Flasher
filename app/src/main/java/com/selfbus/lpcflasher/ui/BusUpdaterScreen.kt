@@ -1,18 +1,26 @@
 package com.selfbus.lpcflasher.ui
 
+import android.content.Intent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -25,11 +33,14 @@ import com.selfbus.lpcflasher.data.I18n
 fun BusUpdaterScreen(
     viewModel: BusUpdaterViewModel,
     onOpenFile: () -> Unit,
+    onSaveFile: (fileName: String, content: String) -> Unit,
     onMenuClick: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val log by viewModel.log.collectAsState()
     var showInfo by remember { mutableStateOf(false) }
+    val clipboardManager = LocalClipboardManager.current
+    val context = LocalContext.current
 
     Scaffold(
         topBar = {
@@ -155,12 +166,6 @@ fun BusUpdaterScreen(
                             enabled = !uiState.isBusy && !uiState.isConnected
                         )
                         FilterChip(
-                            selected = uiState.deviceSearchMode == BusUpdaterViewModel.DeviceSearchMode.SERIAL,
-                            onClick = { viewModel.setDeviceSearchMode(BusUpdaterViewModel.DeviceSearchMode.SERIAL) },
-                            label = { Text(I18n.t("bu_serialNo")) },
-                            enabled = !uiState.isBusy && !uiState.isConnected
-                        )
-                        FilterChip(
                             selected = uiState.deviceSearchMode == BusUpdaterViewModel.DeviceSearchMode.DEVICE_ADDRESS,
                             onClick = { viewModel.setDeviceSearchMode(BusUpdaterViewModel.DeviceSearchMode.DEVICE_ADDRESS) },
                             label = { Text(I18n.t("bu_deviceAddressChip")) },
@@ -177,21 +182,6 @@ fun BusUpdaterScreen(
                         BusUpdaterViewModel.DeviceSearchMode.PROG_BUTTON -> {
                             Text(
                                 I18n.t("bu_progButtonHint"),
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                        }
-                        BusUpdaterViewModel.DeviceSearchMode.SERIAL -> {
-                            OutlinedTextField(
-                                value = uiState.knxSerialInput,
-                                onValueChange = viewModel::setKnxSerialInput,
-                                label = { Text(I18n.t("bu_knxSerial")) },
-                                placeholder = { Text("013A:XXXXXXXX") },
-                                singleLine = true,
-                                enabled = !uiState.isBusy && !uiState.isConnected,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                            Text(
-                                I18n.t("bu_serialHint"),
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
@@ -342,18 +332,55 @@ fun BusUpdaterScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(I18n.t("bu_log"), style = MaterialTheme.typography.titleMedium)
-                        Spacer(Modifier.weight(1f))
-                        TextButton(onClick = { viewModel.clearLog() }) { Text(I18n.t("bu_clear")) }
+                        Text(
+                            I18n.t("bu_log"),
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(
+                            onClick = { clipboardManager.setText(AnnotatedString(viewModel.getLogText())) },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(Icons.Default.ContentCopy, contentDescription = I18n.t("bu_copyLog"), modifier = Modifier.size(18.dp))
+                        }
+                        IconButton(
+                            onClick = { onSaveFile(viewModel.getLogFileName(), viewModel.getLogText()) },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(Icons.Default.Save, contentDescription = I18n.t("bu_saveLog"), modifier = Modifier.size(18.dp))
+                        }
+                        IconButton(
+                            onClick = {
+                                val send = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_TEXT, viewModel.getLogText())
+                                }
+                                context.startActivity(Intent.createChooser(send, I18n.t("bu_shareLog")))
+                            },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(Icons.Default.Share, contentDescription = I18n.t("bu_shareLog"), modifier = Modifier.size(18.dp))
+                        }
+                        IconButton(
+                            onClick = { viewModel.clearLog() },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = I18n.t("bu_clearLog"), modifier = Modifier.size(18.dp))
+                        }
+                        TextButton(onClick = { viewModel.toggleDebug() }) {
+                            Text(if (uiState.debugVisible) "Debug ▲" else "Debug ▼", fontSize = 12.sp)
+                        }
                     }
-                    if (log.isEmpty()) {
+                    val visibleLog = log.filter { !it.debug || uiState.debugVisible }
+                    if (visibleLog.isEmpty()) {
                         Text("—", style = MaterialTheme.typography.bodySmall)
                     } else {
-                        log.takeLast(200).forEach { line ->
+                        visibleLog.takeLast(200).forEach { line ->
                             Text(
-                                line,
+                                line.text,
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = 11.sp,
+                                color = if (line.debug) MaterialTheme.colorScheme.outline else Color.Unspecified,
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }

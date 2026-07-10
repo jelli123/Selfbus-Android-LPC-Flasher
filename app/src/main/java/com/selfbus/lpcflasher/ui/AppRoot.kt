@@ -87,6 +87,7 @@ fun AppRoot(
             AppDestination.BusUpdater -> BusUpdaterScreen(
                 viewModel = busUpdaterViewModel,
                 onOpenFile = onOpenBusFile,
+                onSaveFile = onSaveFile,
                 onMenuClick = { scope.launch { drawerState.open() } }
             )
         }

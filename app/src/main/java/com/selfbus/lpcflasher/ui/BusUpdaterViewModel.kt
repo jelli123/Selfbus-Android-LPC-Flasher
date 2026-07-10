@@ -9,6 +9,7 @@ import com.selfbus.lpcflasher.data.HexParser
 import com.selfbus.lpcflasher.data.I18n
 import com.selfbus.lpcflasher.data.MurmurHash3
 import com.selfbus.lpcflasher.data.Settings
+import com.selfbus.lpcflasher.serial.knx.CalimeroLog
 import com.selfbus.lpcflasher.serial.knx.KnxUpdaterManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,6 +17,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.slf4j.event.Level
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -27,7 +29,10 @@ import java.util.Locale
 class BusUpdaterViewModel(application: Application) : AndroidViewModel(application) {
 
     /** How the device to be programmed is identified. */
-    enum class DeviceSearchMode { PROG_BUTTON, SERIAL, DEVICE_ADDRESS, MANUAL }
+    enum class DeviceSearchMode { PROG_BUTTON, DEVICE_ADDRESS, MANUAL }
+
+    /** A single log line; [debug] lines are only shown when debug output is enabled. */
+    data class LogLine(val text: String, val debug: Boolean = false)
 
     data class UiState(
         val gatewayIp: String = "",
@@ -43,7 +48,6 @@ class BusUpdaterViewModel(application: Application) : AndroidViewModel(applicati
 
         // Device search
         val deviceSearchMode: DeviceSearchMode = DeviceSearchMode.PROG_BUTTON,
-        val knxSerialInput: String = "",
         val deviceAddressInput: String = "1.1.1",
         val uidInput: String = "",
         val foundDeviceAddress: String? = null,
@@ -70,14 +74,17 @@ class BusUpdaterViewModel(application: Application) : AndroidViewModel(applicati
         val isBusy: Boolean = false,
         val progress: Int = -1, // -1 = hidden
 
+        val debugVisible: Boolean = false,
         val language: I18n.Lang = I18n.currentLanguage
     )
 
     private val _uiState = MutableStateFlow(UiState())
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
 
-    private val _log = MutableStateFlow<List<String>>(emptyList())
-    val log: StateFlow<List<String>> = _log.asStateFlow()
+    private val _log = MutableStateFlow<List<LogLine>>(emptyList())
+    val log: StateFlow<List<LogLine>> = _log.asStateFlow()
+
+    private val logLock = Any()
 
     private val timeFmt = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
 
@@ -88,15 +95,41 @@ class BusUpdaterViewModel(application: Application) : AndroidViewModel(applicati
 
     init {
         initCatalog()
+        // Route calimero's SLF4J output into the log view; DEBUG/TRACE/INFO are
+        // marked as debug lines and only shown when the Debug switch is on.
+        CalimeroLog.debugEnabled = _uiState.value.debugVisible
+        CalimeroLog.sink = { level, _, msg ->
+            val isDbg = level != Level.WARN && level != Level.ERROR
+            addLine("calimero: $msg", isDbg)
+        }
     }
 
-    private fun appendLog(message: String) {
-        val line = "[${timeFmt.format(Date())}] $message"
-        _log.value = (_log.value + line).takeLast(500)
+    private fun addLine(text: String, debug: Boolean) {
+        synchronized(logLock) {
+            val line = LogLine("[${timeFmt.format(Date())}] $text", debug)
+            _log.value = (_log.value + line).takeLast(1000)
+        }
     }
+
+    private fun appendLog(message: String) = addLine(message, false)
 
     fun clearLog() {
-        _log.value = emptyList()
+        synchronized(logLock) { _log.value = emptyList() }
+    }
+
+    /** Full log text (all lines incl. debug) for copy/save/share. */
+    fun getLogText(): String = synchronized(logLock) { _log.value.joinToString("\n") { it.text } }
+
+    fun getLogFileName(): String {
+        val ts = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.getDefault()).format(Date())
+        return "busupdater_log_$ts.txt"
+    }
+
+    /** Toggle debug output (also enables calimero DEBUG/TRACE/INFO forwarding). */
+    fun toggleDebug() {
+        val newVal = !_uiState.value.debugVisible
+        _uiState.value = _uiState.value.copy(debugVisible = newVal)
+        CalimeroLog.debugEnabled = newVal
     }
 
     // ---- Form field setters ----
@@ -106,7 +139,6 @@ class BusUpdaterViewModel(application: Application) : AndroidViewModel(applicati
     fun setProgAddress(v: String) { _uiState.value = _uiState.value.copy(progAddress = v) }
     fun setEraseBeforeFlash(v: Boolean) { _uiState.value = _uiState.value.copy(eraseBeforeFlash = v) }
     fun setDeviceSearchMode(mode: DeviceSearchMode) { _uiState.value = _uiState.value.copy(deviceSearchMode = mode) }
-    fun setKnxSerialInput(v: String) { _uiState.value = _uiState.value.copy(knxSerialInput = v) }
     fun setDeviceAddressInput(v: String) { _uiState.value = _uiState.value.copy(deviceAddressInput = v) }
     fun setUidInput(v: String) { _uiState.value = _uiState.value.copy(uidInput = v) }
 
@@ -279,10 +311,9 @@ class BusUpdaterViewModel(application: Application) : AndroidViewModel(applicati
     /**
      * Determine the address of the device to program, based on the selected mode.
      *
-     * For [DeviceSearchMode.SERIAL] and [DeviceSearchMode.DEVICE_ADDRESS] the
-     * device is running its normal application, so it is first restarted into
-     * the bootloader (programming mode) and afterwards answers on the fixed
-     * bootloader address.
+     * For [DeviceSearchMode.DEVICE_ADDRESS] the device is running its normal
+     * application, so it is first restarted into the bootloader (programming
+     * mode) and afterwards answers on the fixed bootloader address.
      */
     private fun resolveDeviceAddress(s: UiState): String {
         return when (s.deviceSearchMode) {
@@ -300,20 +331,6 @@ class BusUpdaterViewModel(application: Application) : AndroidViewModel(applicati
                     else -> devices.first()
                 }
             }
-            DeviceSearchMode.SERIAL -> {
-                val serial = parseKnxSerial(s.knxSerialInput)
-                    ?: throw KnxUpdaterManager.KnxUpdaterException(
-                        "Ungültige KNX-Seriennummer (Format: 013A:XXXXXXXX)"
-                    )
-                // The bootloader itself does not answer to serial-number addressing,
-                // so this finds the running device; then restart it into the bootloader.
-                val running = manager.findDeviceBySerial(serial)
-                    ?: throw KnxUpdaterManager.KnxUpdaterException(
-                        "Kein Gerät mit dieser Seriennummer gefunden (läuft es in normaler Applikation?)"
-                    )
-                manager.restartDeviceToBootloader(running)
-                KnxUpdaterManager.BOOTLOADER_ADDRESS
-            }
             DeviceSearchMode.DEVICE_ADDRESS -> {
                 val addr = s.deviceAddressInput.trim()
                 if (addr.isBlank())
@@ -326,17 +343,6 @@ class BusUpdaterViewModel(application: Application) : AndroidViewModel(applicati
                     throw KnxUpdaterManager.KnxUpdaterException("Bitte Bootloader-Adresse eingeben")
                 s.progAddress.trim()
             }
-        }
-    }
-
-    /** Parse a KNX serial like "013A:1A2B3C4D" (or without colon) into 6 bytes. */
-    private fun parseKnxSerial(input: String): ByteArray? {
-        val hex = input.filter { it.lowercaseChar() in "0123456789abcdef" }
-        if (hex.length != 12) return null
-        return try {
-            ByteArray(6) { i -> hex.substring(i * 2, i * 2 + 2).toInt(16).toByte() }
-        } catch (_: Exception) {
-            null
         }
     }
 
@@ -489,6 +495,7 @@ class BusUpdaterViewModel(application: Application) : AndroidViewModel(applicati
 
     override fun onCleared() {
         super.onCleared()
+        CalimeroLog.sink = null
         manager.disconnect()
     }
 }
