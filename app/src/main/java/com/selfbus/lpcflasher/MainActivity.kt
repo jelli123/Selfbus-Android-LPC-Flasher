@@ -25,15 +25,14 @@ class MainActivity : ComponentActivity() {
         const val ACTION_USB_PERMISSION = "com.selfbus.lpcflasher.USB_PERMISSION"
 
         // Intel-HEX firmware files have no registered MIME type; Android's document
-        // picker reports them as octet-stream. Restricting to these types hides
-        // photos, PDFs etc. and keeps the picker focused on firmware files.
-        // (SAF cannot filter by file extension, so .bin — also octet-stream — may
-        // still appear; the user is warned about non-.hex files on load.)
-        private val FIRMWARE_MIME_TYPES = arrayOf(
-            "application/octet-stream",
-            "application/x-hex",
-            "text/plain"
-        )
+        // picker reports them as "application/octet-stream". Restricting to this
+        // type keeps most pickers focused on firmware files and hides photos, PDFs
+        // (application/pdf) and text files (text/plain).
+        //
+        // NOTE: SAF cannot filter by file extension, and some OEM pickers ignore
+        // the MIME filter entirely, so the final ".hex-only" guarantee is enforced
+        // after selection in [isAllowedFirmware].
+        private val FIRMWARE_MIME_TYPES = arrayOf("application/octet-stream")
     }
 
     private val viewModel: FlasherViewModel by viewModels()
@@ -44,14 +43,14 @@ class MainActivity : ComponentActivity() {
     private val openFileLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
-        uri?.let { viewModel.loadFirmwareFile(it) }
+        uri?.let { if (isAllowedFirmware(it)) viewModel.loadFirmwareFile(it) }
     }
 
     // SAF file picker – open firmware file (KNX Bus-Updater)
     private val openBusFileLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
-        uri?.let { busUpdaterViewModel.loadFirmwareFile(it) }
+        uri?.let { if (isAllowedFirmware(it)) busUpdaterViewModel.loadFirmwareFile(it) }
     }
 
     // SAF file picker – save read-back / log
@@ -156,5 +155,34 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
         try { unregisterReceiver(usbReceiver) } catch (_: Exception) {}
         viewModel.forceDisconnect()
+    }
+
+    /**
+     * Enforce that only Intel-HEX firmware files can be loaded. SAF pickers cannot
+     * filter by file extension (and some OEM pickers ignore the MIME filter), so
+     * we reject anything that is not a *.hex / *.ihex file after selection.
+     */
+    private fun isAllowedFirmware(uri: android.net.Uri): Boolean {
+        val name = queryDisplayName(uri)?.lowercase()
+        val ok = name != null && (name.endsWith(".hex") || name.endsWith(".ihex"))
+        if (!ok) {
+            android.widget.Toast.makeText(
+                this,
+                com.selfbus.lpcflasher.data.I18n.t("onlyHexFiles"),
+                android.widget.Toast.LENGTH_LONG
+            ).show()
+        }
+        return ok
+    }
+
+    private fun queryDisplayName(uri: android.net.Uri): String? {
+        return try {
+            contentResolver.query(uri, null, null, null, null)?.use { c ->
+                val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (idx >= 0 && c.moveToFirst()) c.getString(idx) else null
+            }
+        } catch (_: Exception) {
+            null
+        }
     }
 }
