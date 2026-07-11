@@ -78,6 +78,20 @@ object Settings {
         get() = prefs.getString(LANG_KEY, "de") ?: "de"
         set(v) = prefs.edit().putString(LANG_KEY, v).apply()
 
+    // ---- Bus-Updater: last used KNXnet/IP connection ----
+
+    var lastGatewayIp: String
+        get() = prefs.getString("bu_lastGatewayIp", "") ?: ""
+        set(v) = prefs.edit().putString("bu_lastGatewayIp", v).apply()
+
+    var lastGatewayPort: String
+        get() = prefs.getString("bu_lastGatewayPort", "3671") ?: "3671"
+        set(v) = prefs.edit().putString("bu_lastGatewayPort", v).apply()
+
+    var lastOwnAddress: String
+        get() = prefs.getString("bu_lastOwnAddress", "15.15.250") ?: "15.15.250"
+        set(v) = prefs.edit().putString("bu_lastOwnAddress", v).apply()
+
     // ---- Derived values ----
 
     val readChunkSizes = intArrayOf(128, 256, 512)

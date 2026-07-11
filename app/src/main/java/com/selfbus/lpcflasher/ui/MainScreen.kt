@@ -549,11 +549,12 @@ fun LogSection(
                     Icon(Icons.Default.Save, contentDescription = t("saveLog"), modifier = Modifier.size(18.dp))
                 }
                 IconButton(onClick = {
-                    val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                        type = "text/plain"
-                        putExtra(android.content.Intent.EXTRA_TEXT, viewModel.getLogText())
-                    }
-                    context.startActivity(android.content.Intent.createChooser(send, t("shareLog")))
+                    com.selfbus.lpcflasher.data.LogShare.shareLog(
+                        context = context,
+                        text = viewModel.getLogText(),
+                        chooserTitle = t("shareLog"),
+                        baseName = viewModel.getLogFileName().substringBeforeLast(".")
+                    )
                 }, modifier = Modifier.size(32.dp)) {
                     Icon(Icons.Default.Share, contentDescription = t("shareLog"), modifier = Modifier.size(18.dp))
                 }

@@ -74,6 +74,10 @@ class BusUpdaterViewModel(application: Application) : AndroidViewModel(applicati
         val isBusy: Boolean = false,
         val progress: Int = -1, // -1 = hidden
 
+        // Transfer rate during flashing (bytes/second); 0 = unknown/not running.
+        val currentRateBps: Double = 0.0,
+        val averageRateBps: Double = 0.0,
+
         val debugVisible: Boolean = false,
         val language: I18n.Lang = I18n.currentLanguage
     )
@@ -94,6 +98,12 @@ class BusUpdaterViewModel(application: Application) : AndroidViewModel(applicati
     private var firmware: ByteArray = ByteArray(0)
 
     init {
+        // Pre-fill the connection fields with the last used gateway/own address.
+        _uiState.value = _uiState.value.copy(
+            gatewayIp = Settings.lastGatewayIp,
+            gatewayPort = Settings.lastGatewayPort,
+            ownAddress = Settings.lastOwnAddress
+        )
         initCatalog()
         // Route calimero's SLF4J output into the log view; DEBUG/TRACE/INFO are
         // marked as debug lines and only shown when the Debug switch is on.
@@ -179,6 +189,13 @@ class BusUpdaterViewModel(application: Application) : AndroidViewModel(applicati
                     firmwareStartAddress = start
                 )
                 appendLog("Firmware geladen: ${name ?: "?"} (${bytes.size} Bytes ab 0x%X)".format(start))
+                if (!isHex) {
+                    appendLog(
+                        "Warnung: .bin-Datei ohne Adressinformation – Startadresse 0x%X angenommen. "
+                            .format(start) +
+                            "Für Bootloader-Firmware bitte .hex verwenden."
+                    )
+                }
             } catch (ex: Exception) {
                 appendLog("Fehler beim Laden der Firmware: ${ex.message}")
             }
@@ -226,7 +243,8 @@ class BusUpdaterViewModel(application: Application) : AndroidViewModel(applicati
                 _uiState.value = _uiState.value.copy(
                     isBusy = false,
                     isConnected = manager.isConnected,
-                    progress = -1
+                    progress = -1,
+                    currentRateBps = 0.0
                 )
             }
         }
@@ -243,6 +261,11 @@ class BusUpdaterViewModel(application: Application) : AndroidViewModel(applicati
             try {
                 val port = s.gatewayPort.toIntOrNull() ?: 3671
                 manager.openLink(s.gatewayIp.trim(), port, s.ownAddress.trim())
+
+                // Remember this connection so it is pre-filled next time.
+                Settings.lastGatewayIp = s.gatewayIp.trim()
+                Settings.lastGatewayPort = s.gatewayPort.trim()
+                Settings.lastOwnAddress = s.ownAddress.trim()
 
                 val address = resolveDeviceAddress(s)
                 withContext(Dispatchers.Main) {
@@ -377,18 +400,43 @@ class BusUpdaterViewModel(application: Application) : AndroidViewModel(applicati
             // so we retry the whole flash immediately without restarting it.
             val maxAttempts = 3
             var lastError: Exception? = null
+            val totalBytes = firmware.size
             for (attempt in 1..maxAttempts) {
                 try {
                     if (attempt > 1) appendLog("KNX: Flash-Wiederholung $attempt/$maxAttempts ...")
+                    val flashStart = System.nanoTime()
+                    var lastTime = flashStart
+                    var lastBytes = 0
+                    _uiState.value = _uiState.value.copy(currentRateBps = 0.0, averageRateBps = 0.0)
                     manager.flashFirmware(
                         firmware = firmware,
                         startAddress = s.firmwareStartAddress,
                         eraseRange = s.eraseBeforeFlash
                     ) { p ->
-                        _uiState.value = _uiState.value.copy(progress = (p * 100).toInt())
+                        val now = System.nanoTime()
+                        val bytesDone = (p * totalBytes).toInt()
+                        val dtCur = (now - lastTime) / 1e9
+                        val dBytes = bytesDone - lastBytes
+                        val cur = if (dtCur > 0.05 && dBytes > 0) dBytes / dtCur else _uiState.value.currentRateBps
+                        val dtTotal = (now - flashStart) / 1e9
+                        val avg = if (dtTotal > 0) bytesDone / dtTotal else 0.0
+                        if (dtCur > 0.2) { lastTime = now; lastBytes = bytesDone }
+                        _uiState.value = _uiState.value.copy(
+                            progress = (p * 100).toInt(),
+                            currentRateBps = cur,
+                            averageRateBps = avg
+                        )
                     }
+                    val elapsed = (System.nanoTime() - flashStart) / 1e9
+                    val finalAvg = if (elapsed > 0) totalBytes / elapsed else 0.0
+                    _uiState.value = _uiState.value.copy(averageRateBps = finalAvg, currentRateBps = 0.0)
+                    appendLog("KNX: Übertragung fertig – Ø %.0f B/s (%.1f s)".format(finalAvg, elapsed))
                     // Only restart into the application after a successful flash.
                     manager.restartDevice()
+                    // The device leaves the bootloader on restart, so the bus
+                    // connection is no longer usable — close it and reflect that
+                    // in the UI (otherwise the "Disconnect" button stays enabled).
+                    manager.disconnect()
                     lastError = null
                     break
                 } catch (ex: Exception) {

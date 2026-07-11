@@ -1,6 +1,5 @@
 package com.selfbus.lpcflasher.ui
 
-import android.content.Intent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
@@ -39,6 +38,8 @@ fun BusUpdaterScreen(
     val uiState by viewModel.uiState.collectAsState()
     val log by viewModel.log.collectAsState()
     var showInfo by remember { mutableStateOf(false) }
+    // Pending destructive action awaiting confirmation ("erase" or "restart").
+    var pendingDanger by remember { mutableStateOf<String?>(null) }
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
 
@@ -301,12 +302,12 @@ fun BusUpdaterScreen(
                     ) { Text(I18n.t("bu_flash")) }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(
-                            onClick = { viewModel.eraseFlash() },
+                            onClick = { pendingDanger = "erase" },
                             enabled = !uiState.isBusy && uiState.isConnected,
                             modifier = Modifier.weight(1f)
                         ) { Text(I18n.t("bu_erase")) }
                         OutlinedButton(
-                            onClick = { viewModel.restartDevice() },
+                            onClick = { pendingDanger = "restart" },
                             enabled = !uiState.isBusy && uiState.isConnected,
                             modifier = Modifier.weight(1f)
                         ) { Text(I18n.t("bu_restart")) }
@@ -321,7 +322,16 @@ fun BusUpdaterScreen(
                         progress = { (uiState.progress / 100f).coerceIn(0f, 1f) },
                         modifier = Modifier.fillMaxWidth().height(8.dp)
                     )
-                    Text("${uiState.progress}%", style = MaterialTheme.typography.bodySmall)
+                    val rateText = buildString {
+                        append("${uiState.progress}%")
+                        if (uiState.currentRateBps > 0) {
+                            append("  •  ${I18n.t("bu_rateCurrent")} ${formatRate(uiState.currentRateBps)}")
+                        }
+                        if (uiState.averageRateBps > 0) {
+                            append("  •  ${I18n.t("bu_rateAverage")} ${formatRate(uiState.averageRateBps)}")
+                        }
+                    }
+                    Text(rateText, style = MaterialTheme.typography.bodySmall)
                 }
             }
 
@@ -351,11 +361,12 @@ fun BusUpdaterScreen(
                         }
                         IconButton(
                             onClick = {
-                                val send = Intent(Intent.ACTION_SEND).apply {
-                                    type = "text/plain"
-                                    putExtra(Intent.EXTRA_TEXT, viewModel.getLogText())
-                                }
-                                context.startActivity(Intent.createChooser(send, I18n.t("bu_shareLog")))
+                                com.selfbus.lpcflasher.data.LogShare.shareLog(
+                                    context = context,
+                                    text = viewModel.getLogText(),
+                                    chooserTitle = I18n.t("bu_shareLog"),
+                                    baseName = viewModel.getLogFileName().removeSuffix(".txt")
+                                )
                             },
                             modifier = Modifier.size(32.dp)
                         ) {
@@ -399,6 +410,34 @@ fun BusUpdaterScreen(
     if (showInfo) {
         AboutDialog(onDismiss = { showInfo = false })
     }
+
+    // Confirmation for destructive actions (erase / restart): after these the
+    // device may have no valid application, so a new connection is only possible
+    // by pressing the device's programming button.
+    if (pendingDanger != null) {
+        val isErase = pendingDanger == "erase"
+        AlertDialog(
+            onDismissRequest = { pendingDanger = null },
+            icon = { Icon(Icons.Default.Info, contentDescription = null) },
+            title = { Text(I18n.t(if (isErase) "bu_erase" else "bu_restart")) },
+            text = { Text(I18n.t("bu_dangerWarning")) },
+            confirmButton = {
+                TextButton(onClick = {
+                    val action = pendingDanger
+                    pendingDanger = null
+                    if (action == "erase") viewModel.eraseFlash() else viewModel.restartDevice()
+                }) { Text(I18n.t("bu_execute")) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDanger = null }) { Text(I18n.t("bu_cancel")) }
+            }
+        )
+    }
+}
+
+/** Format a byte-per-second rate as a human-readable string (B/s, KB/s). */
+private fun formatRate(bps: Double): String {
+    return if (bps >= 1024) "%.1f KB/s".format(bps / 1024.0) else "%.0f B/s".format(bps)
 }
 
 /**

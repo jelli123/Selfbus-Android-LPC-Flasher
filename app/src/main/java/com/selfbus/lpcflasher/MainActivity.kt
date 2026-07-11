@@ -23,6 +23,17 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val ACTION_USB_PERMISSION = "com.selfbus.lpcflasher.USB_PERMISSION"
+
+        // Intel-HEX firmware files have no registered MIME type; Android's document
+        // picker reports them as octet-stream. Restricting to these types hides
+        // photos, PDFs etc. and keeps the picker focused on firmware files.
+        // (SAF cannot filter by file extension, so .bin — also octet-stream — may
+        // still appear; the user is warned about non-.hex files on load.)
+        private val FIRMWARE_MIME_TYPES = arrayOf(
+            "application/octet-stream",
+            "application/x-hex",
+            "text/plain"
+        )
     }
 
     private val viewModel: FlasherViewModel by viewModels()
@@ -98,12 +109,12 @@ class MainActivity : ComponentActivity() {
                 AppRoot(
                     flasherViewModel = viewModel,
                     busUpdaterViewModel = busUpdaterViewModel,
-                    onOpenFile = { openFileLauncher.launch(arrayOf("*/*")) },
+                    onOpenFile = { openFileLauncher.launch(FIRMWARE_MIME_TYPES) },
                     onSaveFile = { fileName, content ->
                         pendingSaveContent = content
                         saveFileLauncher.launch(fileName)
                     },
-                    onOpenBusFile = { openBusFileLauncher.launch(arrayOf("*/*")) }
+                    onOpenBusFile = { openBusFileLauncher.launch(FIRMWARE_MIME_TYPES) }
                 )
             }
         }
