@@ -11,6 +11,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -38,6 +39,7 @@ fun BusUpdaterScreen(
     val uiState by viewModel.uiState.collectAsState()
     val log by viewModel.log.collectAsState()
     var showInfo by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(false) }
     // Pending destructive action awaiting confirmation ("erase" or "restart").
     var pendingDanger by remember { mutableStateOf<String?>(null) }
     val clipboardManager = LocalClipboardManager.current
@@ -64,6 +66,10 @@ fun BusUpdaterScreen(
                     // Info / about
                     IconButton(onClick = { showInfo = true }) {
                         Icon(Icons.Default.Info, contentDescription = I18n.t("about"))
+                    }
+                    // Settings
+                    IconButton(onClick = { showSettings = true }) {
+                        Icon(Icons.Default.Settings, contentDescription = I18n.t("bu_settings"))
                     }
                 }
             )
@@ -365,7 +371,8 @@ fun BusUpdaterScreen(
                                     context = context,
                                     text = viewModel.getLogText(),
                                     chooserTitle = I18n.t("bu_shareLog"),
-                                    baseName = viewModel.getLogFileName().removeSuffix(".txt")
+                                    baseName = viewModel.getLogFileName().removeSuffix(".txt"),
+                                    zipThresholdLines = uiState.zipThresholdLines
                                 )
                             },
                             modifier = Modifier.size(32.dp)
@@ -411,6 +418,16 @@ fun BusUpdaterScreen(
         AboutDialog(onDismiss = { showInfo = false })
     }
 
+    if (showSettings) {
+        BusUpdaterSettingsDialog(
+            zipThresholdLines = uiState.zipThresholdLines,
+            calimeroLogLevel = uiState.calimeroLogLevel,
+            onZipThresholdChange = viewModel::setZipThresholdLines,
+            onLogLevelChange = viewModel::setCalimeroLogLevel,
+            onDismiss = { showSettings = false }
+        )
+    }
+
     // Confirmation for destructive actions (erase / restart): after these the
     // device may have no valid application, so a new connection is only possible
     // by pressing the device's programming button.
@@ -438,6 +455,78 @@ fun BusUpdaterScreen(
 /** Format a byte-per-second rate as a human-readable string (B/s, KB/s). */
 private fun formatRate(bps: Double): String {
     return if (bps >= 1024) "%.1f KB/s".format(bps / 1024.0) else "%.0f B/s".format(bps)
+}
+
+/** Settings dialog for the Bus-Updater (log zip threshold + calimero log level). */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun BusUpdaterSettingsDialog(
+    zipThresholdLines: Int,
+    calimeroLogLevel: String,
+    onZipThresholdChange: (Int) -> Unit,
+    onLogLevelChange: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var thresholdText by remember(zipThresholdLines) { mutableStateOf(zipThresholdLines.toString()) }
+    val levels = listOf("ERROR", "WARN", "INFO", "DEBUG", "TRACE")
+    var levelExpanded by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Default.Settings, contentDescription = null) },
+        title = { Text(I18n.t("bu_settings")) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                // Zip threshold
+                OutlinedTextField(
+                    value = thresholdText,
+                    onValueChange = { v ->
+                        thresholdText = v.filter { it.isDigit() }.take(7)
+                        thresholdText.toIntOrNull()?.let(onZipThresholdChange)
+                    },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    label = { Text(I18n.t("bu_zipThreshold")) },
+                    supportingText = { Text(I18n.t("bu_zipThresholdHint")) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                // Calimero log level
+                ExposedDropdownMenuBox(
+                    expanded = levelExpanded,
+                    onExpandedChange = { levelExpanded = it }
+                ) {
+                    OutlinedTextField(
+                        value = calimeroLogLevel,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text(I18n.t("bu_logLevel")) },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = levelExpanded) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .menuAnchor(MenuAnchorType.PrimaryNotEditable)
+                    )
+                    ExposedDropdownMenu(
+                        expanded = levelExpanded,
+                        onDismissRequest = { levelExpanded = false }
+                    ) {
+                        levels.forEach { level ->
+                            DropdownMenuItem(
+                                text = { Text(level) },
+                                onClick = {
+                                    onLogLevelChange(level)
+                                    levelExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("OK") }
+        }
+    )
 }
 
 /**

@@ -6,6 +6,8 @@
     <!-- KNXnet/IP gateway discovery (multicast search) for the Bus-Updater -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <!-- Keep CPU / Wi-Fi awake during long flash / erase operations -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
         android:name=".LpcFlasherApp"

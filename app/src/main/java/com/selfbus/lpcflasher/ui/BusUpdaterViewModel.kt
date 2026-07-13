@@ -37,7 +37,7 @@ class BusUpdaterViewModel(application: Application) : AndroidViewModel(applicati
     data class UiState(
         val gatewayIp: String = "",
         val gatewayPort: String = "3671",
-        val ownAddress: String = "15.15.250",
+        val ownAddress: String = "0.0.0",
         val progAddress: String = "15.15.192",
         val eraseBeforeFlash: Boolean = true,
 
@@ -78,6 +78,10 @@ class BusUpdaterViewModel(application: Application) : AndroidViewModel(applicati
         val currentRateBps: Double = 0.0,
         val averageRateBps: Double = 0.0,
 
+        // Settings (persisted): log zip threshold in lines and calimero log level.
+        val zipThresholdLines: Int = 500,
+        val calimeroLogLevel: String = "WARN",
+
         val debugVisible: Boolean = false,
         val language: I18n.Lang = I18n.currentLanguage
     )
@@ -98,16 +102,20 @@ class BusUpdaterViewModel(application: Application) : AndroidViewModel(applicati
     private var firmware: ByteArray = ByteArray(0)
 
     init {
-        // Pre-fill the connection fields with the last used gateway/own address.
+        // Pre-fill the connection fields with the last used gateway/own address
+        // and load the persisted settings.
         _uiState.value = _uiState.value.copy(
             gatewayIp = Settings.lastGatewayIp,
             gatewayPort = Settings.lastGatewayPort,
-            ownAddress = Settings.lastOwnAddress
+            ownAddress = Settings.lastOwnAddress,
+            zipThresholdLines = Settings.busZipThresholdLines,
+            calimeroLogLevel = Settings.calimeroLogLevel
         )
         initCatalog()
-        // Route calimero's SLF4J output into the log view; DEBUG/TRACE/INFO are
-        // marked as debug lines and only shown when the Debug switch is on.
-        CalimeroLog.debugEnabled = _uiState.value.debugVisible
+        // Route calimero's SLF4J output into the log view; anything below WARN is
+        // marked as a debug line and only shown when the Debug switch is on. The
+        // minimum forwarded level is configurable via the settings dialog.
+        CalimeroLog.setLevelByName(Settings.calimeroLogLevel)
         CalimeroLog.sink = { level, _, msg ->
             val isDbg = level != Level.WARN && level != Level.ERROR
             addLine("calimero: $msg", isDbg)
@@ -135,11 +143,22 @@ class BusUpdaterViewModel(application: Application) : AndroidViewModel(applicati
         return "busupdater_log_$ts.txt"
     }
 
-    /** Toggle debug output (also enables calimero DEBUG/TRACE/INFO forwarding). */
+    /** Toggle visibility of debug-marked log lines in the view. */
     fun toggleDebug() {
-        val newVal = !_uiState.value.debugVisible
-        _uiState.value = _uiState.value.copy(debugVisible = newVal)
-        CalimeroLog.debugEnabled = newVal
+        _uiState.value = _uiState.value.copy(debugVisible = !_uiState.value.debugVisible)
+    }
+
+    // ---- Settings ----
+    fun setZipThresholdLines(v: Int) {
+        val clamped = v.coerceIn(0, 1_000_000)
+        Settings.busZipThresholdLines = clamped
+        _uiState.value = _uiState.value.copy(zipThresholdLines = clamped)
+    }
+
+    fun setCalimeroLogLevel(level: String) {
+        Settings.calimeroLogLevel = level
+        CalimeroLog.setLevelByName(level)
+        _uiState.value = _uiState.value.copy(calimeroLogLevel = level)
     }
 
     // ---- Form field setters ----

@@ -20,18 +20,31 @@ object CalimeroLog {
     var sink: ((Level, String, String) -> Unit)? = null
 
     /**
-     * When false only WARN/ERROR are forwarded; when true everything
-     * (incl. DEBUG/TRACE/INFO) is forwarded.
+     * Minimum severity forwarded to the [sink]. Messages less severe than this
+     * are dropped. Defaults to WARN (only WARN/ERROR). Configurable via the
+     * Bus-Updater settings dialog.
      */
     @Volatile
-    var debugEnabled: Boolean = false
+    var minLevel: Level = Level.WARN
+
+    /** Set [minLevel] from a level name (ERROR/WARN/INFO/DEBUG/TRACE); WARN on unknown. */
+    fun setLevelByName(name: String) {
+        minLevel = when (name.uppercase()) {
+            "ERROR" -> Level.ERROR
+            "WARN" -> Level.WARN
+            "INFO" -> Level.INFO
+            "DEBUG" -> Level.DEBUG
+            "TRACE" -> Level.TRACE
+            else -> Level.WARN
+        }
+    }
 
     private val loggers = ConcurrentHashMap<String, Logger>()
 
     fun getLogger(name: String): Logger = loggers.getOrPut(name) { SinkLogger(name) }
 
-    internal fun isEnabled(level: Level): Boolean =
-        if (debugEnabled) true else (level == Level.WARN || level == Level.ERROR)
+    // slf4j Level severities: ERROR(40) > WARN(30) > INFO(20) > DEBUG(10) > TRACE(0).
+    internal fun isEnabled(level: Level): Boolean = level.toInt() >= minLevel.toInt()
 
     internal fun emit(level: Level, name: String, message: String, t: Throwable?) {
         val s = sink ?: return

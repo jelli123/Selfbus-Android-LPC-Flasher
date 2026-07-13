@@ -89,8 +89,23 @@ object Settings {
         set(v) = prefs.edit().putString("bu_lastGatewayPort", v).apply()
 
     var lastOwnAddress: String
-        get() = prefs.getString("bu_lastOwnAddress", "15.15.250") ?: "15.15.250"
+        get() = prefs.getString("bu_lastOwnAddress", "0.0.0") ?: "0.0.0"
         set(v) = prefs.edit().putString("bu_lastOwnAddress", v).apply()
+
+    // ---- Bus-Updater: settings dialog ----
+
+    /**
+     * Number of log lines from which the log is shared as a .zip instead of
+     * plain text. 0 = never zip, 1 = always zip, N = zip if lines >= N.
+     */
+    var busZipThresholdLines: Int
+        get() = prefs.getInt("bu_zipThresholdLines", 500)
+        set(v) = prefs.edit().putInt("bu_zipThresholdLines", v).apply()
+
+    /** Minimum calimero log level forwarded to the log view (ERROR/WARN/INFO/DEBUG/TRACE). */
+    var calimeroLogLevel: String
+        get() = prefs.getString("bu_calimeroLogLevel", "WARN") ?: "WARN"
+        set(v) = prefs.edit().putString("bu_calimeroLogLevel", v).apply()
 
     // ---- Derived values ----
 

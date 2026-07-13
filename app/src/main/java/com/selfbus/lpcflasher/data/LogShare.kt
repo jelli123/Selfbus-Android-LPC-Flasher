@@ -12,25 +12,40 @@ import java.util.zip.ZipOutputStream
 /**
  * Shares log text with other apps.
  *
- * Small logs are shared as plain text via `ACTION_SEND`. Large logs (e.g. with
- * debug output enabled) are compressed into a `.zip` file and shared as an
- * attachment instead, because passing very large strings through
- * `EXTRA_TEXT` can freeze receiving apps (e.g. chat clients).
+ * Depending on [zipThresholdLines] the log is shared either as plain text via
+ * `ACTION_SEND` or, for large logs, compressed into a `.zip` file and shared as
+ * an attachment — passing very large strings through `EXTRA_TEXT` can freeze
+ * receiving apps (e.g. chat clients).
  */
 object LogShare {
 
-    /** Above this many characters the log is zipped and shared as a file. */
-    private const val TEXT_THRESHOLD = 100_000
+    /** Default line threshold above which a log is zipped when none is configured. */
+    const val DEFAULT_ZIP_THRESHOLD_LINES = 500
 
+    /**
+     * @param zipThresholdLines number of log lines from which to zip:
+     *   `0` = never zip (always text), `1` = always zip, `N` = zip if the text
+     *   has at least `N` lines.
+     */
     fun shareLog(
         context: Context,
         text: String,
         chooserTitle: String,
         baseName: String,
+        zipThresholdLines: Int = DEFAULT_ZIP_THRESHOLD_LINES,
     ) {
-        if (text.length <= TEXT_THRESHOLD || !shareAsZip(context, text, chooserTitle, baseName)) {
+        val zip = when {
+            zipThresholdLines <= 0 -> false
+            else -> lineCount(text) >= zipThresholdLines
+        }
+        if (!zip || !shareAsZip(context, text, chooserTitle, baseName)) {
             shareAsText(context, text, chooserTitle)
         }
+    }
+
+    private fun lineCount(text: String): Int {
+        if (text.isEmpty()) return 0
+        return text.count { it == '\n' } + 1
     }
 
     private fun shareAsText(context: Context, text: String, chooserTitle: String) {

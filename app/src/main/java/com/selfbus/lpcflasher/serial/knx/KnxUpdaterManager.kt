@@ -2,6 +2,7 @@ package com.selfbus.lpcflasher.serial.knx
 
 import android.content.Context
 import android.net.wifi.WifiManager
+import android.os.PowerManager
 import tuwien.auto.calimero.CloseEvent
 import tuwien.auto.calimero.IndividualAddress
 import tuwien.auto.calimero.Priority
@@ -79,6 +80,10 @@ class KnxUpdaterManager(
 
     class KnxUpdaterException(message: String) : Exception(message)
 
+    /** Thrown when the bootloader answered a UPD command with a non-success result code. */
+    class UpdResultException(val result: UpdResult, val command: UpdCommand) :
+        Exception("${command.name}: ${result.message} (0x%02X)".format(result.code))
+
     /** A KNXnet/IP gateway found during discovery. */
     data class GatewayInfo(val name: String, val ip: String, val port: Int) {
         override fun toString(): String = "$name ($ip:$port)"
@@ -87,7 +92,15 @@ class KnxUpdaterManager(
     private var link: KNXNetworkLink? = null
     private var transport: TransportLayer? = null
     private var destination: Destination? = null
-    private var ownAddress: String = "15.15.250"
+    private var ownAddress: String = "0.0.0"
+    /** Individual address of the currently opened programming device (for reconnect). */
+    private var deviceAddress: String? = null
+
+    // Prevent the device from entering standby / Wi-Fi power save during long
+    // flash / erase operations, which would otherwise abort the transfer.
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
+    private var keepAwakeCount = 0
 
     /** Queue of received UPD response ASDUs (asdu[0]=command, asdu[1..]=data). */
     private val responses = ArrayBlockingQueue<ByteArray>(8)
@@ -297,7 +310,29 @@ class KnxUpdaterManager(
         }
         transport = tl
         destination = dst
+        deviceAddress = progAddress
         log("KNX: Verbunden mit Programmiergerät $progAddress")
+    }
+
+    /**
+     * Return a usable destination, re-instantiating it if the current one was
+     * destroyed. A calimero [Destination] transitions to [Destination.State.Destroyed]
+     * after a disconnect/detach and can then no longer be used to send data — a
+     * fresh destination has to be created on the existing transport layer.
+     */
+    private fun ensureDestination(): Destination {
+        val tl = transport ?: throw KnxUpdaterException("Nicht verbunden")
+        val current = destination
+        if (current != null && current.state != Destination.State.Destroyed) {
+            return current
+        }
+        val addr = deviceAddress
+            ?: throw KnxUpdaterException("Nicht verbunden")
+        log("KNX: Verbindung zu $addr wird neu aufgebaut (Destination war ungültig)")
+        val dst = tl.createDestination(IndividualAddress(addr), true)
+        tl.connect(dst)
+        destination = dst
+        return dst
     }
 
     /** Convenience: open link and device destination in one step. */
@@ -377,7 +412,49 @@ class KnxUpdaterManager(
         destination = null
         transport = null
         link = null
+        deviceAddress = null
         responses.clear()
+    }
+
+    // ---------------------------------------------------------------------
+    // Keep-awake (prevent standby / Wi-Fi power save during flash / erase)
+    // ---------------------------------------------------------------------
+
+    /**
+     * Acquire a partial CPU wake lock and a high-performance Wi-Fi lock so the
+     * device does not enter standby (and the Wi-Fi radio does not power down)
+     * during a long flash / erase, which would abort the KNXnet/IP transfer.
+     * Reference-counted and paired with [endKeepAwake].
+     */
+    @Synchronized
+    private fun beginKeepAwake(tag: String) {
+        keepAwakeCount++
+        if (keepAwakeCount > 1) return
+        try {
+            val pm = context.applicationContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            wakeLock = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "selfbus:knx-$tag")?.apply {
+                setReferenceCounted(false)
+                acquire(30 * 60 * 1000L) // safety timeout: 30 min
+            }
+            val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            wifiLock = wifi?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "selfbus:knx-$tag")?.apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+        } catch (_: Exception) {
+            // Keeping awake is best-effort; never fail the operation because of it.
+        }
+    }
+
+    @Synchronized
+    private fun endKeepAwake() {
+        if (keepAwakeCount == 0) return
+        keepAwakeCount--
+        if (keepAwakeCount > 0) return
+        try { if (wakeLock?.isHeld == true) wakeLock?.release() } catch (_: Exception) {}
+        try { if (wifiLock?.isHeld == true) wifiLock?.release() } catch (_: Exception) {}
+        wakeLock = null
+        wifiLock = null
     }
 
     // ---------------------------------------------------------------------
@@ -387,7 +464,7 @@ class KnxUpdaterManager(
     /** Send a UPD telegram once and wait for the matching response ASDU. */
     private fun sendUpdOnce(command: UpdCommand, data: ByteArray, timeoutMs: Long): ByteArray {
         val tl = transport ?: throw KnxUpdaterException("Nicht verbunden")
-        val dst = destination ?: throw KnxUpdaterException("Nicht verbunden")
+        val dst = ensureDestination()
         responses.clear()
         val asdu = ByteArray(1 + data.size)
         asdu[0] = command.byte
@@ -430,7 +507,7 @@ class KnxUpdaterManager(
         }
         val result = UpdResult.fromCode(response[1].toInt())
         if (result != UpdResult.IAP_SUCCESS) {
-            throw KnxUpdaterException("${command.name}: ${result.message} (0x%02X)".format(result.code))
+            throw UpdResultException(result, command)
         }
     }
 
@@ -490,9 +567,14 @@ class KnxUpdaterManager(
 
     /** Erase the complete flash. */
     fun eraseCompleteFlash() {
-        log("KNX: Lösche kompletten Flash ...")
-        sendUpdChecked(UpdCommand.ERASE_COMPLETE_FLASH, ByteArray(0), ERASE_RESPONSE_TIMEOUT_MS)
-        log("KNX: Flash gelöscht")
+        beginKeepAwake("erase")
+        try {
+            log("KNX: Lösche kompletten Flash ...")
+            sendUpdChecked(UpdCommand.ERASE_COMPLETE_FLASH, ByteArray(0), ERASE_RESPONSE_TIMEOUT_MS)
+            log("KNX: Flash gelöscht")
+        } finally {
+            endKeepAwake()
+        }
     }
 
     /** Erase the address range [start, start+length-1]. */
@@ -543,38 +625,72 @@ class KnxUpdaterManager(
     ) {
         if (firmware.isEmpty()) throw KnxUpdaterException("Firmware ist leer")
 
-        if (eraseRange) {
-            eraseAddressRange(startAddress, firmware.size)
+        beginKeepAwake("flash")
+        try {
+            if (eraseRange) {
+                eraseAddressRange(startAddress, firmware.size)
+            }
+
+            var progAddress = startAddress
+            var offset = 0
+            val total = firmware.size
+            log("KNX: Programmiere $total Bytes ab 0x%X ...".format(startAddress))
+
+            while (offset < total) {
+                val blockLen = minOf(BLOCK_SIZE, total - offset)
+                val block = firmware.copyOfRange(offset, offset + blockLen)
+
+                // Stream the block into the device RAM buffer and program it. On a
+                // byte-count mismatch we resend just this block (the data since the
+                // last PROGRAM) instead of restarting the whole flash.
+                programBlock(block, progAddress)
+
+                progAddress += blockLen
+                offset += blockLen
+                progress(offset.toFloat() / total.toFloat())
+            }
+            log("KNX: Programmierung abgeschlossen")
+
+            // program the boot descriptor so the new application is started
+            programBootDescriptor(firmware, startAddress)
+        } finally {
+            endKeepAwake()
         }
+    }
 
-        var progAddress = startAddress
-        var offset = 0
-        val total = firmware.size
-        log("KNX: Programmiere $total Bytes ab 0x%X ...".format(startAddress))
-
-        while (offset < total) {
-            val blockLen = minOf(BLOCK_SIZE, total - offset)
-            val block = firmware.copyOfRange(offset, offset + blockLen)
-
-            // 1) stream the block to the device RAM buffer in MAX_PAYLOAD chunks
-            sendDataBlock(block)
-
-            // 2) program the buffered block to flash
-            val crc = UpdStreams.crc32Value(block)
-            val progPars = ByteArray(10)
-            UpdStreams.shortToStream(progPars, 0, blockLen)
-            UpdStreams.longToStream(progPars, 2, progAddress.toLong())
-            UpdStreams.longToStream(progPars, 6, crc)
-            sendUpdChecked(UpdCommand.PROGRAM, progPars)
-
-            progAddress += blockLen
-            offset += blockLen
-            progress(offset.toFloat() / total.toFloat())
+    /**
+     * Stream [block] to the device RAM buffer and PROGRAM it to flash at
+     * [progAddress].
+     *
+     * If the bootloader reports a byte-count mismatch (RAM buffer out of sync
+     * with the PROGRAM length, e.g. after a duplicated SEND_DATA telegram), the
+     * whole block is re-streamed and re-programmed. This resends only "the bytes
+     * since the last PROGRAM" instead of aborting and restarting the entire flash.
+     */
+    private fun programBlock(block: ByteArray, progAddress: Int) {
+        val maxBlockRetries = 3
+        var attempt = 0
+        while (true) {
+            try {
+                sendDataBlock(block)
+                val crc = UpdStreams.crc32Value(block)
+                val progPars = ByteArray(10)
+                UpdStreams.shortToStream(progPars, 0, block.size)
+                UpdStreams.longToStream(progPars, 2, progAddress.toLong())
+                UpdStreams.longToStream(progPars, 6, crc)
+                sendUpdChecked(UpdCommand.PROGRAM, progPars)
+                return
+            } catch (ex: UpdResultException) {
+                val recoverable = ex.result == UpdResult.BYTECOUNT_RECEIVED_TOO_HIGH ||
+                    ex.result == UpdResult.BYTECOUNT_RECEIVED_TOO_LOW
+                attempt++
+                if (!recoverable || attempt >= maxBlockRetries) throw ex
+                log(
+                    "KNX: %s bei 0x%X – sende Block erneut (%d/%d)"
+                        .format(ex.result.message, progAddress, attempt, maxBlockRetries)
+                )
+            }
         }
-        log("KNX: Programmierung abgeschlossen")
-
-        // 3) program the boot descriptor so the new application is started
-        programBootDescriptor(firmware, startAddress)
     }
 
     /** Stream a block to the device's RAM buffer using SEND_DATA telegrams. */
