@@ -605,6 +605,8 @@ fun SettingsSection(viewModel: FlasherViewModel) {
     var readChunkSlider by remember { mutableFloatStateOf(Settings.readChunkSizeIndex.toFloat()) }
     var writeChunkSlider by remember { mutableFloatStateOf(Settings.writeChunkSizeIndex.toFloat()) }
     var autoReset by remember { mutableStateOf(Settings.autoResetAfterFlash) }
+    var showHardwareConfig by remember { mutableStateOf(false) }
+    var hardwareProfileName by remember { mutableStateOf(HardwareConfigs.selected().name) }
 
     ElevatedCard(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -638,6 +640,17 @@ fun SettingsSection(viewModel: FlasherViewModel) {
                     }
                 )
                 Text(t("autoReset"), style = MaterialTheme.typography.bodyMedium)
+            }
+
+            Text(t("hardwareControl"), style = MaterialTheme.typography.titleSmall)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(t("hardwareProfile"), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    Text(hardwareProfileName, style = MaterialTheme.typography.bodyMedium)
+                }
+                TextButton(onClick = { showHardwareConfig = true }) {
+                    Text(t("hardwareProfileConfigure"))
+                }
             }
 
             // Read/Write chunk sizes
@@ -690,6 +703,13 @@ fun SettingsSection(viewModel: FlasherViewModel) {
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
         }
+    }
+
+    if (showHardwareConfig) {
+        HardwareConfigDialog(onDismiss = {
+            showHardwareConfig = false
+            hardwareProfileName = HardwareConfigs.selected().name
+        })
     }
 }
 

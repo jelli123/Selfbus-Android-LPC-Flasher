@@ -7,6 +7,9 @@ import android.hardware.usb.UsbManager
 import com.hoho.android.usbserial.driver.UsbSerialDriver
 import com.hoho.android.usbserial.driver.UsbSerialPort
 import com.hoho.android.usbserial.driver.UsbSerialProber
+import com.selfbus.lpcflasher.data.ControlLine
+import com.selfbus.lpcflasher.data.HardwareConfig
+import com.selfbus.lpcflasher.data.HardwareConfigs
 import com.selfbus.lpcflasher.data.I18n
 import com.selfbus.lpcflasher.data.Logger
 import com.selfbus.lpcflasher.data.LpcVariants
@@ -26,7 +29,16 @@ class UsbSerialManager(private val context: Context) {
     )
 
     // ---- State ----
+    /** The data (TX/RX) port of the active [HardwareConfig]. */
     private var serialPort: UsbSerialPort? = null
+    /**
+     * All ports opened for the active [HardwareConfig], keyed by port index.
+     * Usually just the data port (index 0), but a profile that routes
+     * RESET/ISP to a different port (e.g. FT2232H channel B) adds that port
+     * here too.
+     */
+    private var openPorts: MutableMap<Int, UsbSerialPort> = mutableMapOf()
+    private var activeConfig: HardwareConfig = HardwareConfigs.ORIGINAL
     private var connection: UsbDeviceConnection? = null
     private var readBuffer = StringBuilder()
 
@@ -77,7 +89,13 @@ class UsbSerialManager(private val context: Context) {
     fun listDevices(): List<Pair<UsbSerialDriver, String>> {
         val manager = context.getSystemService(Context.USB_SERVICE) as UsbManager
         val drivers = UsbSerialProber.getDefaultProber().findAllDrivers(manager)
-        return drivers.map { it to getDeviceName(it.device) }
+        return drivers.map { driver ->
+            val baseName = getDeviceName(driver.device)
+            // Surface the detected port count so multi-UART adapters (e.g. FT2232H)
+            // can be confirmed to enumerate with 2 ports before even trying to connect.
+            val name = if (driver.ports.size > 1) "$baseName (${driver.ports.size} ports)" else baseName
+            driver to name
+        }
     }
 
     /**
@@ -102,21 +120,23 @@ class UsbSerialManager(private val context: Context) {
             val usbConnection = manager.openDevice(driver.device)
                 ?: throw Exception("Cannot open USB device – permission denied?")
 
-            val port = driver.ports[0]
-            port.open(usbConnection)
-            port.setParameters(
-                Settings.baudRate,
-                8,
-                UsbSerialPort.STOPBITS_1,
-                UsbSerialPort.PARITY_NONE
-            )
+            val config = HardwareConfigs.selected()
+            val ports = openPortsForConfig(driver, usbConnection, config)
 
             this.connection = usbConnection
-            this.serialPort = port
+            this.activeConfig = config
+            this.openPorts = ports.toMutableMap()
+            this.serialPort = ports[config.dataPortIndex]
             this.readBuffer.clear()
 
+            Logger.debug(
+                "Hardware profile \"${config.name}\": data=port${config.dataPortIndex}, " +
+                    "reset=port${config.resetPortIndex}.${config.resetLine}, " +
+                    "isp=port${config.ispPortIndex}.${config.ispLine}"
+            )
+
             // Initialize to safe idle state: RESET inactive, ISP inactive
-            setResetAndIsp(port, resetAsserted = false, ispAsserted = false)
+            setResetAndIsp(resetAsserted = false, ispAsserted = false)
 
             // ISP mode entry
             val syncOk = enterIspAndSynchronize()
@@ -161,24 +181,20 @@ class UsbSerialManager(private val context: Context) {
             val usbConnection = manager.openDevice(driver.device)
                 ?: throw Exception("Cannot open USB device – permission denied?")
 
-            val port = driver.ports[0]
-            port.open(usbConnection)
-            port.setParameters(
-                Settings.baudRate,
-                8,
-                UsbSerialPort.STOPBITS_1,
-                UsbSerialPort.PARITY_NONE
-            )
+            val config = HardwareConfigs.selected()
+            val ports = openPortsForConfig(driver, usbConnection, config)
 
             this.connection = usbConnection
-            this.serialPort = port
+            this.activeConfig = config
+            this.openPorts = ports.toMutableMap()
+            this.serialPort = ports[config.dataPortIndex]
             this.readBuffer.clear()
             isConnected = true
 
             // Initialize to safe idle state: RESET inactive, ISP inactive
-            setResetAndIsp(port, resetAsserted = false, ispAsserted = false)
+            setResetAndIsp(resetAsserted = false, ispAsserted = false)
 
-            Logger.debug("USB port opened (no ISP)")
+            Logger.debug("USB port opened (no ISP), hardware profile \"${config.name}\"")
             return true
 
         } catch (e: Exception) {
@@ -189,10 +205,46 @@ class UsbSerialManager(private val context: Context) {
     }
 
     /**
+     * Opens every distinct USB-serial port index that [config] references
+     * (data port, RESET port, ISP port — often the same port, sometimes not)
+     * and configures each with the current baud/8N1 settings.
+     *
+     * Throws if the connected device doesn't expose enough ports for the
+     * profile, so the caller's existing try/catch reports a clear reason
+     * instead of silently misbehaving.
+     */
+    private fun openPortsForConfig(
+        driver: UsbSerialDriver,
+        usbConnection: UsbDeviceConnection,
+        config: HardwareConfig
+    ): Map<Int, UsbSerialPort> {
+        val indices = setOf(config.dataPortIndex, config.resetPortIndex, config.ispPortIndex)
+        val maxIndex = indices.max()
+        if (driver.ports.size <= maxIndex) {
+            throw Exception(
+                "Hardware profile \"${config.name}\" needs port ${maxIndex + 1}, " +
+                    "but this device only exposes ${driver.ports.size} port(s)"
+            )
+        }
+        return indices.associateWith { idx ->
+            val port = driver.ports[idx]
+            port.open(usbConnection)
+            port.setParameters(
+                Settings.baudRate,
+                8,
+                UsbSerialPort.STOPBITS_1,
+                UsbSerialPort.PARITY_NONE
+            )
+            port
+        }
+    }
+
+    /**
      * Disconnect and clean up.
      */
     fun disconnect() {
-        try { serialPort?.close() } catch (_: Exception) {}
+        openPorts.values.forEach { try { it.close() } catch (_: Exception) {} }
+        openPorts.clear()
         try { connection?.close() } catch (_: Exception) {}
         serialPort = null
         connection = null
@@ -222,11 +274,11 @@ class UsbSerialManager(private val context: Context) {
     // ---- ISP Mode Entry ----
 
     /**
-     * Enter ISP mode using DTR/RTS signal sequence.
-     * DTR → RESET (active low), RTS → P0.1/ISP (active low).
+     * Enter ISP mode using the RESET/ISP signal sequence of the active
+     * [HardwareConfig] (both lines active low).
      */
     private suspend fun enterISPMode(profile: IspLineProfile) {
-        val port = serialPort ?: return
+        if (serialPort == null) return
         val t1 = Settings.t1Timing
         val t2 = Settings.t2Timing
         // val postDelay = Settings.postResetDelay
@@ -235,16 +287,16 @@ class UsbSerialManager(private val context: Context) {
 
         try {
             // 1) resetAsserted=true, ispAsserted=true
-            setResetAndIsp(port, resetAsserted = true, ispAsserted = true)
+            setResetAndIsp(resetAsserted = true, ispAsserted = true)
             delay(t1.toLong())
 
             // 2) resetAsserted=false, ispAsserted=true
-            setResetAndIsp(port, resetAsserted = false, ispAsserted = true)
+            setResetAndIsp(resetAsserted = false, ispAsserted = true)
             delay(t2.toLong())
 
             // 3) resetAsserted=false, ispAsserted=false
             // won't work due to intermediate reset pulses, so let ISP Enable asserted
-            // setResetAndIsp(port, resetAsserted = false, ispAsserted = false)
+            // setResetAndIsp(resetAsserted = false, ispAsserted = false)
             // delay(postDelay.toLong())
 
             Logger.debug("ISP mode sequence complete")
@@ -253,15 +305,28 @@ class UsbSerialManager(private val context: Context) {
         }
     }
 
-    private fun setResetAndIsp(port: UsbSerialPort, resetAsserted: Boolean, ispAsserted: Boolean) {
-        // Direct mapping requested:
-        // resetAsserted = DTR, ispAsserted = RTS
-        port.dtr = resetAsserted
-        port.rts = ispAsserted
+    /**
+     * Drives the RESET/ISP control lines according to the active
+     * [HardwareConfig] — each line's port + RTS/DTR choice is looked up
+     * independently, since a profile can route them to different ports.
+     * Both signals are active-low.
+     */
+    private fun setResetAndIsp(resetAsserted: Boolean, ispAsserted: Boolean) {
+        val config = activeConfig
+        setControlLine(config.resetPortIndex, config.resetLine, resetAsserted)
+        setControlLine(config.ispPortIndex, config.ispLine, ispAsserted)
+    }
+
+    private fun setControlLine(portIndex: Int, line: ControlLine, asserted: Boolean) {
+        val port = openPorts[portIndex] ?: return
+        when (line) {
+            ControlLine.RTS -> port.rts = asserted
+            ControlLine.DTR -> port.dtr = asserted
+        }
     }
 
     private suspend fun enterIspAndSynchronize(): Boolean {
-        val port = serialPort ?: return false
+        if (serialPort == null) return false
 
         for (profile in ISP_LINE_PROFILES) {
             for (attempt in 1..2) {
@@ -275,7 +340,7 @@ class UsbSerialManager(private val context: Context) {
                     return true
                 }
                 // Put lines in released state before next profile/attempt
-                try { setResetAndIsp(port, resetAsserted = false, ispAsserted = false) } catch (_: Exception) {}
+                try { setResetAndIsp(resetAsserted = false, ispAsserted = false) } catch (_: Exception) {}
                 delay(80)
             }
         }
@@ -295,13 +360,13 @@ class UsbSerialManager(private val context: Context) {
      * Perform a hardware reset (DTR pulse, RTS stays low → normal boot).
      */
     suspend fun performReset() {
-        val port = serialPort ?: return
+        if (serialPort == null) return
 
         try {
-            setResetAndIsp(port, resetAsserted = true, ispAsserted = false)
+            setResetAndIsp(resetAsserted = true, ispAsserted = false)
             delay(Settings.resetDuration.toLong())
 
-            setResetAndIsp(port, resetAsserted = false, ispAsserted = false)
+            setResetAndIsp(resetAsserted = false, ispAsserted = false)
             delay(Settings.postResetDelay.toLong())
 
             // After hardware reset, bootloader ISP session is no longer guaranteed.

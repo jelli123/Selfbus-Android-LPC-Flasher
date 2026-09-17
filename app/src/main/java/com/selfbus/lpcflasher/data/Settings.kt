@@ -48,6 +48,16 @@ object Settings {
         get() = prefs.getBoolean("autoResetAfterFlash", true)
         set(v) = prefs.edit().putBoolean("autoResetAfterFlash", v).apply()
 
+    /** Id of the active [HardwareConfig] wiring profile (built-in or custom). */
+    var selectedHardwareConfigId: String
+        get() = prefs.getString("selectedHardwareConfigId", HardwareConfigs.ORIGINAL_ID) ?: HardwareConfigs.ORIGINAL_ID
+        set(v) = prefs.edit().putString("selectedHardwareConfigId", v).apply()
+
+    /** JSON-encoded list of user-defined [HardwareConfig] profiles. */
+    var customHardwareConfigsJson: String
+        get() = prefs.getString("customHardwareConfigs", "[]") ?: "[]"
+        set(v) = prefs.edit().putString("customHardwareConfigs", v).apply()
+
     var useBootDescOverride: Boolean
         get() = prefs.getBoolean("useBootDescOverride", false)
         set(v) = prefs.edit().putBoolean("useBootDescOverride", v).apply()
