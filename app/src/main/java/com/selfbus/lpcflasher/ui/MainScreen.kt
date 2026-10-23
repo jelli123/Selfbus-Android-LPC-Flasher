@@ -606,7 +606,9 @@ fun SettingsSection(viewModel: FlasherViewModel) {
     var writeChunkSlider by remember { mutableFloatStateOf(Settings.writeChunkSizeIndex.toFloat()) }
     var autoReset by remember { mutableStateOf(Settings.autoResetAfterFlash) }
     var showHardwareConfig by remember { mutableStateOf(false) }
-    var hardwareProfileName by remember { mutableStateOf(HardwareConfigs.selected().name) }
+    var hardwareProfile by remember { mutableStateOf(HardwareConfigs.selected()) }
+    val uiState by viewModel.uiState.collectAsState()
+    val detectedPortCount = uiState.availableDevices.getOrNull(uiState.selectedDeviceIndex)?.first?.ports?.size
 
     ElevatedCard(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -646,7 +648,8 @@ fun SettingsSection(viewModel: FlasherViewModel) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(t("hardwareProfile"), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                    Text(hardwareProfileName, style = MaterialTheme.typography.bodyMedium)
+                    Text(hardwareProfile.displayName, style = MaterialTheme.typography.bodyMedium)
+                    Text(hardwareProfile.summary, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                 }
                 TextButton(onClick = { showHardwareConfig = true }) {
                     Text(t("hardwareProfileConfigure"))
@@ -706,9 +709,9 @@ fun SettingsSection(viewModel: FlasherViewModel) {
     }
 
     if (showHardwareConfig) {
-        HardwareConfigDialog(onDismiss = {
+        HardwareConfigDialog(detectedPortCount = detectedPortCount, onDismiss = {
             showHardwareConfig = false
-            hardwareProfileName = HardwareConfigs.selected().name
+            hardwareProfile = HardwareConfigs.selected()
         })
     }
 }

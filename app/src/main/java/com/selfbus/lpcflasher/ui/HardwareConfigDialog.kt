@@ -20,14 +20,24 @@ import com.selfbus.lpcflasher.data.I18n
 import com.selfbus.lpcflasher.data.Settings
 import java.util.UUID
 
+/** Highest port count of a supported adapter (FT4232H). */
 private const val MAX_CONFIGURABLE_PORTS = 4
+
+private val WarningColor = Color(0xFFE65100)
+
+/** Highest port number (1-based) a profile needs. */
+private fun HardwareConfig.requiredPorts(): Int =
+    maxOf(dataPortIndex, resetPortIndex, ispPortIndex) + 1
 
 /**
  * Lists all hardware wiring profiles (built-in + custom), lets the user pick
  * the active one, and launches create/edit/delete for custom ones.
+ *
+ * [detectedPortCount] is the port count of the currently selected USB device
+ * (null if none is attached); profiles needing more ports are flagged.
  */
 @Composable
-fun HardwareConfigDialog(onDismiss: () -> Unit) {
+fun HardwareConfigDialog(detectedPortCount: Int?, onDismiss: () -> Unit) {
     val t = I18n::t
     var selectedId by remember { mutableStateOf(Settings.selectedHardwareConfigId) }
     var customConfigs by remember { mutableStateOf(HardwareConfigs.customConfigs()) }
@@ -47,11 +57,20 @@ fun HardwareConfigDialog(onDismiss: () -> Unit) {
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
+                if (detectedPortCount != null) {
+                    Text(
+                        "${t("hardwareConfigDetectedPorts")} $detectedPortCount",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.Gray
+                    )
+                }
+
                 Text(t("hardwareConfigBuiltIn"), style = MaterialTheme.typography.labelMedium, color = Color.Gray)
                 HardwareConfigs.BUILT_IN.forEach { config ->
                     HardwareConfigRow(
                         config = config,
                         selected = config.id == selectedId,
+                        detectedPortCount = detectedPortCount,
                         onSelect = {
                             selectedId = config.id
                             HardwareConfigs.select(config.id)
@@ -65,6 +84,7 @@ fun HardwareConfigDialog(onDismiss: () -> Unit) {
                     HardwareConfigRow(
                         config = config,
                         selected = config.id == selectedId,
+                        detectedPortCount = detectedPortCount,
                         onSelect = {
                             selectedId = config.id
                             HardwareConfigs.select(config.id)
@@ -95,6 +115,7 @@ fun HardwareConfigDialog(onDismiss: () -> Unit) {
     if (showEditor) {
         HardwareConfigEditDialog(
             existing = editTarget,
+            detectedPortCount = detectedPortCount,
             onDismiss = { showEditor = false },
             onSave = { config ->
                 HardwareConfigs.save(config)
@@ -130,37 +151,39 @@ fun HardwareConfigDialog(onDismiss: () -> Unit) {
 private fun HardwareConfigRow(
     config: HardwareConfig,
     selected: Boolean,
+    detectedPortCount: Int?,
     onSelect: () -> Unit,
     onEdit: (() -> Unit)? = null,
     onDelete: (() -> Unit)? = null
 ) {
+    val t = I18n::t
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically
     ) {
         RadioButton(selected = selected, onClick = onSelect)
         Column(modifier = Modifier.weight(1f)) {
-            Text(config.name, style = MaterialTheme.typography.bodyMedium)
-            Text(summarize(config), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            Text(config.displayName, style = MaterialTheme.typography.bodyMedium)
+            Text(config.summary, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            if (detectedPortCount != null && config.requiredPorts() > detectedPortCount) {
+                Text(
+                    t("hardwareConfigPortsMissing").format(config.requiredPorts()),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = WarningColor
+                )
+            }
         }
         if (onEdit != null) {
             IconButton(onClick = onEdit, modifier = Modifier.size(32.dp)) {
-                Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+                Icon(Icons.Default.Edit, contentDescription = t("hardwareConfigEdit"), modifier = Modifier.size(18.dp))
             }
         }
         if (onDelete != null) {
             IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
-                Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+                Icon(Icons.Default.Delete, contentDescription = t("hardwareConfigDelete"), modifier = Modifier.size(18.dp))
             }
         }
     }
-}
-
-private fun summarize(config: HardwareConfig): String {
-    fun port(idx: Int) = "USB${idx + 1}"
-    return "TX/RX→${port(config.dataPortIndex)} · " +
-        "RESET→${port(config.resetPortIndex)}.${config.resetLine} · " +
-        "ISP→${port(config.ispPortIndex)}.${config.ispLine}"
 }
 
 /** Create/edit form for a single custom hardware configuration. */
@@ -168,6 +191,7 @@ private fun summarize(config: HardwareConfig): String {
 @Composable
 private fun HardwareConfigEditDialog(
     existing: HardwareConfig?,
+    detectedPortCount: Int?,
     onDismiss: () -> Unit,
     onSave: (HardwareConfig) -> Unit
 ) {
@@ -176,9 +200,14 @@ private fun HardwareConfigEditDialog(
     var dataPort by remember { mutableIntStateOf(existing?.dataPortIndex ?: 0) }
     var resetPort by remember { mutableIntStateOf(existing?.resetPortIndex ?: 0) }
     var resetLine by remember { mutableStateOf(existing?.resetLine ?: ControlLine.DTR) }
+    var resetInverted by remember { mutableStateOf(existing?.resetInverted ?: false) }
     var ispPort by remember { mutableIntStateOf(existing?.ispPortIndex ?: 0) }
     var ispLine by remember { mutableStateOf(existing?.ispLine ?: ControlLine.RTS) }
+    var ispInverted by remember { mutableStateOf(existing?.ispInverted ?: false) }
     var showNameError by remember { mutableStateOf(false) }
+
+    val lineConflict = resetPort == ispPort && resetLine == ispLine
+    val requiredPorts = maxOf(dataPort, resetPort, ispPort) + 1
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -199,42 +228,68 @@ private fun HardwareConfigEditDialog(
                 )
 
                 Text(t("hardwareConfigDataPort"), style = MaterialTheme.typography.labelLarge)
-                PortDropdown(selected = dataPort, onSelect = { dataPort = it })
+                PortDropdown(selected = dataPort, detectedPortCount = detectedPortCount, onSelect = { dataPort = it })
 
                 HorizontalDivider()
                 Text(t("hardwareConfigResetLine"), style = MaterialTheme.typography.labelLarge)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    Box(Modifier.weight(1f)) { PortDropdown(selected = resetPort, onSelect = { resetPort = it }) }
+                    Box(Modifier.weight(1f)) {
+                        PortDropdown(selected = resetPort, detectedPortCount = detectedPortCount, onSelect = { resetPort = it })
+                    }
                     Box(Modifier.weight(1f)) { LineDropdown(selected = resetLine, onSelect = { resetLine = it }) }
                 }
+                InverterCheckbox(checked = resetInverted, onCheckedChange = { resetInverted = it })
 
                 HorizontalDivider()
                 Text(t("hardwareConfigIspLine"), style = MaterialTheme.typography.labelLarge)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    Box(Modifier.weight(1f)) { PortDropdown(selected = ispPort, onSelect = { ispPort = it }) }
+                    Box(Modifier.weight(1f)) {
+                        PortDropdown(selected = ispPort, detectedPortCount = detectedPortCount, onSelect = { ispPort = it })
+                    }
                     Box(Modifier.weight(1f)) { LineDropdown(selected = ispLine, onSelect = { ispLine = it }) }
+                }
+                InverterCheckbox(checked = ispInverted, onCheckedChange = { ispInverted = it })
+
+                if (lineConflict) {
+                    Text(
+                        t("hardwareConfigLineConflict"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+                if (detectedPortCount != null && requiredPorts > detectedPortCount) {
+                    Text(
+                        t("hardwareConfigPortsMissing").format(requiredPorts),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = WarningColor
+                    )
                 }
             }
         },
         confirmButton = {
-            Button(onClick = {
-                if (name.isBlank()) {
-                    showNameError = true
-                    return@Button
-                }
-                onSave(
-                    HardwareConfig(
-                        id = existing?.id ?: UUID.randomUUID().toString(),
-                        name = name.trim(),
-                        dataPortIndex = dataPort,
-                        resetPortIndex = resetPort,
-                        resetLine = resetLine,
-                        ispPortIndex = ispPort,
-                        ispLine = ispLine,
-                        builtIn = false
+            Button(
+                enabled = !lineConflict,
+                onClick = {
+                    if (name.isBlank()) {
+                        showNameError = true
+                        return@Button
+                    }
+                    onSave(
+                        HardwareConfig(
+                            id = existing?.id ?: UUID.randomUUID().toString(),
+                            name = name.trim(),
+                            dataPortIndex = dataPort,
+                            resetPortIndex = resetPort,
+                            resetLine = resetLine,
+                            resetInverted = resetInverted,
+                            ispPortIndex = ispPort,
+                            ispLine = ispLine,
+                            ispInverted = ispInverted,
+                            builtIn = false
+                        )
                     )
-                )
-            }) {
+                }
+            ) {
                 Text(t("save"))
             }
         },
@@ -244,9 +299,17 @@ private fun HardwareConfigEditDialog(
     )
 }
 
+@Composable
+private fun InverterCheckbox(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Checkbox(checked = checked, onCheckedChange = onCheckedChange)
+        Text(I18n.t("hardwareConfigInverted"), style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PortDropdown(selected: Int, onSelect: (Int) -> Unit) {
+private fun PortDropdown(selected: Int, detectedPortCount: Int?, onSelect: (Int) -> Unit) {
     val t = I18n::t
     var expanded by remember { mutableStateOf(false) }
     ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
@@ -255,13 +318,20 @@ private fun PortDropdown(selected: Int, onSelect: (Int) -> Unit) {
             onValueChange = {},
             readOnly = true,
             label = { Text(t("hardwareConfigPort")) },
+            isError = detectedPortCount != null && selected >= detectedPortCount,
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
             modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth()
         )
         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             for (idx in 0 until MAX_CONFIGURABLE_PORTS) {
+                val available = detectedPortCount == null || idx < detectedPortCount
                 DropdownMenuItem(
-                    text = { Text("USB${idx + 1}") },
+                    text = {
+                        Text(
+                            if (available) "USB${idx + 1}" else "USB${idx + 1} ${t("hardwareConfigPortNotPresent")}",
+                            color = if (available) Color.Unspecified else Color.Gray
+                        )
+                    },
                     onClick = { onSelect(idx); expanded = false }
                 )
             }
@@ -293,4 +363,3 @@ private fun LineDropdown(selected: ControlLine, onSelect: (ControlLine) -> Unit)
         }
     }
 }
-

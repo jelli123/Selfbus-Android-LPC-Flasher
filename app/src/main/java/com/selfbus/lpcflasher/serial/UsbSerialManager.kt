@@ -119,21 +119,18 @@ class UsbSerialManager(private val context: Context) {
             val manager = context.getSystemService(Context.USB_SERVICE) as UsbManager
             val usbConnection = manager.openDevice(driver.device)
                 ?: throw Exception("Cannot open USB device – permission denied?")
+            // Assign right away so disconnect() releases it if opening the ports fails
+            this.connection = usbConnection
 
             val config = HardwareConfigs.selected()
             val ports = openPortsForConfig(driver, usbConnection, config)
 
-            this.connection = usbConnection
             this.activeConfig = config
             this.openPorts = ports.toMutableMap()
             this.serialPort = ports[config.dataPortIndex]
             this.readBuffer.clear()
 
-            Logger.debug(
-                "Hardware profile \"${config.name}\": data=port${config.dataPortIndex}, " +
-                    "reset=port${config.resetPortIndex}.${config.resetLine}, " +
-                    "isp=port${config.ispPortIndex}.${config.ispLine}"
-            )
+            Logger.debug("Hardware profile \"${config.displayName}\": ${config.summary}")
 
             // Initialize to safe idle state: RESET inactive, ISP inactive
             setResetAndIsp(resetAsserted = false, ispAsserted = false)
@@ -180,11 +177,12 @@ class UsbSerialManager(private val context: Context) {
             val manager = context.getSystemService(Context.USB_SERVICE) as UsbManager
             val usbConnection = manager.openDevice(driver.device)
                 ?: throw Exception("Cannot open USB device – permission denied?")
+            // Assign right away so disconnect() releases it if opening the ports fails
+            this.connection = usbConnection
 
             val config = HardwareConfigs.selected()
             val ports = openPortsForConfig(driver, usbConnection, config)
 
-            this.connection = usbConnection
             this.activeConfig = config
             this.openPorts = ports.toMutableMap()
             this.serialPort = ports[config.dataPortIndex]
@@ -194,7 +192,7 @@ class UsbSerialManager(private val context: Context) {
             // Initialize to safe idle state: RESET inactive, ISP inactive
             setResetAndIsp(resetAsserted = false, ispAsserted = false)
 
-            Logger.debug("USB port opened (no ISP), hardware profile \"${config.name}\"")
+            Logger.debug("USB port opened (no ISP), hardware profile \"${config.displayName}\": ${config.summary}")
             return true
 
         } catch (e: Exception) {
@@ -209,34 +207,45 @@ class UsbSerialManager(private val context: Context) {
      * (data port, RESET port, ISP port — often the same port, sometimes not)
      * and configures each with the current baud/8N1 settings.
      *
-     * Throws if the connected device doesn't expose enough ports for the
-     * profile, so the caller's existing try/catch reports a clear reason
-     * instead of silently misbehaving.
+     * Throws if the profile is invalid or the connected device doesn't expose
+     * enough ports for it, so the caller's existing try/catch reports a clear
+     * reason instead of silently misbehaving. Ports opened before a failure
+     * are closed again.
      */
     private fun openPortsForConfig(
         driver: UsbSerialDriver,
         usbConnection: UsbDeviceConnection,
         config: HardwareConfig
     ): Map<Int, UsbSerialPort> {
+        if (config.hasLineConflict) {
+            throw Exception(I18n.t("hardwareConfigLineConflict"))
+        }
         val indices = setOf(config.dataPortIndex, config.resetPortIndex, config.ispPortIndex)
         val maxIndex = indices.max()
-        if (driver.ports.size <= maxIndex) {
+        if (indices.min() < 0 || driver.ports.size <= maxIndex) {
             throw Exception(
-                "Hardware profile \"${config.name}\" needs port ${maxIndex + 1}, " +
+                "Hardware profile \"${config.displayName}\" needs port ${maxIndex + 1}, " +
                     "but this device only exposes ${driver.ports.size} port(s)"
             )
         }
-        return indices.associateWith { idx ->
-            val port = driver.ports[idx]
-            port.open(usbConnection)
-            port.setParameters(
-                Settings.baudRate,
-                8,
-                UsbSerialPort.STOPBITS_1,
-                UsbSerialPort.PARITY_NONE
-            )
-            port
+        val opened = mutableMapOf<Int, UsbSerialPort>()
+        try {
+            for (idx in indices) {
+                val port = driver.ports[idx]
+                port.open(usbConnection)
+                opened[idx] = port
+                port.setParameters(
+                    Settings.baudRate,
+                    8,
+                    UsbSerialPort.STOPBITS_1,
+                    UsbSerialPort.PARITY_NONE
+                )
+            }
+        } catch (e: Exception) {
+            opened.values.forEach { try { it.close() } catch (_: Exception) {} }
+            throw e
         }
+        return opened
     }
 
     /**
@@ -309,12 +318,13 @@ class UsbSerialManager(private val context: Context) {
      * Drives the RESET/ISP control lines according to the active
      * [HardwareConfig] — each line's port + RTS/DTR choice is looked up
      * independently, since a profile can route them to different ports.
-     * Both signals are active-low.
+     * Both signals are active-low; a line routed through an inverter is
+     * driven with the opposite level.
      */
     private fun setResetAndIsp(resetAsserted: Boolean, ispAsserted: Boolean) {
         val config = activeConfig
-        setControlLine(config.resetPortIndex, config.resetLine, resetAsserted)
-        setControlLine(config.ispPortIndex, config.ispLine, ispAsserted)
+        setControlLine(config.resetPortIndex, config.resetLine, resetAsserted xor config.resetInverted)
+        setControlLine(config.ispPortIndex, config.ispLine, ispAsserted xor config.ispInverted)
     }
 
     private fun setControlLine(portIndex: Int, line: ControlLine, asserted: Boolean) {

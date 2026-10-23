@@ -15,6 +15,10 @@ enum class ControlLine { RTS, DTR }
  * single-adapter wiring) or at different ports (e.g. a second UART channel
  * of a multi-port FTDI chip used purely for control lines).
  *
+ * [resetInverted] / [ispInverted] mark a control line that reaches the target
+ * through an inverter, so the line level has to be flipped to keep the
+ * target-side signal active low.
+ *
  * Port indices are 0-based, matching [com.hoho.android.usbserial.driver.UsbSerialDriver.getPorts].
  */
 @Serializable
@@ -24,10 +28,34 @@ data class HardwareConfig(
     val dataPortIndex: Int = 0,
     val resetPortIndex: Int = 0,
     val resetLine: ControlLine = ControlLine.DTR,
+    val resetInverted: Boolean = false,
     val ispPortIndex: Int = 0,
     val ispLine: ControlLine = ControlLine.RTS,
+    val ispInverted: Boolean = false,
     val builtIn: Boolean = false
-)
+) {
+    /** RESET and ISP must not share the same physical control line. */
+    val hasLineConflict: Boolean
+        get() = resetPortIndex == ispPortIndex && resetLine == ispLine
+
+    /** Name shown in the UI; built-in profiles are translated. */
+    val displayName: String
+        get() = when (id) {
+            HardwareConfigs.ORIGINAL_ID -> I18n.t("hardwareProfileDefaultName")
+            HardwareConfigs.FT2232H_ID -> I18n.t("hardwareProfileFt2232hName")
+            else -> name
+        }
+
+    /** Short wiring summary, e.g. "TX/RX→USB1 · RESET→USB1.DTR · ISP→USB1.RTS". */
+    val summary: String
+        get() {
+            fun port(idx: Int) = "USB${idx + 1}"
+            fun inv(inverted: Boolean) = if (inverted) " (inv.)" else ""
+            return "TX/RX→${port(dataPortIndex)} · " +
+                "RESET→${port(resetPortIndex)}.$resetLine${inv(resetInverted)} · " +
+                "ISP→${port(ispPortIndex)}.$ispLine${inv(ispInverted)}"
+        }
+}
 
 /** Built-in hardware profiles plus persisted storage for user-defined ones. */
 object HardwareConfigs {
