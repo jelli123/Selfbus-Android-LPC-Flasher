@@ -7,13 +7,14 @@ Die beiden Funktionsbereiche sind über ein **Hamburger-Menü** (Navigation Draw
 ## Funktionen
 
 ### USB-Verbindung & Geräte-Erkennung
-- Automatische Erkennung angeschlossener USB-Seriell-Adapter (CP210x, FTDI FT232, CH340, CH9102, PL2303)
+- Automatische Erkennung angeschlossener USB-Seriell-Adapter (CP210x, FTDI FT232R/FT2232H/FT4232H/FT232H/FT231X, CH340, CH9102, PL2303)
+- Anzeige der Port-Anzahl bei Mehrkanal-Adaptern (z. B. „(2 ports)“ beim FT2232H)
 - Automatischer App-Start beim Anschließen eines unterstützten USB-Geräts
 - USB-Permission-Handling mit automatischer Abfrage
 - Auswahl bei mehreren angeschlossenen Geräten
 
 ### ISP-Modus & Chip-Identifikation
-- Automatischer Eintritt in den NXP ISP-Bootloader-Modus über DTR/RTS-Signale
+- Automatischer Eintritt in den NXP ISP-Bootloader-Modus über die RESET/ISP-Steuerleitungen des gewählten [Hardware-Profils](#hardware-profile-resetisp-verdrahtung)
 - Synchronisation mit dem LPC-Bootloader (115200 Baud, 12 MHz Oszillator)
 - Chip-Erkennung anhand der Part-ID (umfangreiche LPC1110/1111/1112/1113/1114/1115-Datenbank)
 - Anzeige von Chip-Name, Flash-Größe und RAM-Größe
@@ -25,7 +26,22 @@ Die beiden Funktionsbereiche sind über ein **Hamburger-Menü** (Navigation Draw
 - **Flash löschen (Erase):** Gesamten Flash-Speicher löschen
 - **Blank-Check:** Prüfen, ob der Flash-Speicher leer ist
 - **Flash lesen (Read):** Gesamten Flash-Inhalt auslesen und als Intel-HEX-Datei speichern
-- **Hardware-Reset:** Chip über DTR-Signal zurücksetzen (ohne ISP-Modus)
+- **Hardware-Reset:** Chip über die RESET-Leitung zurücksetzen (ohne ISP-Modus)
+
+### Hardware-Profile (RESET/ISP-Verdrahtung)
+Ein Hardware-Profil legt fest, über welchen USB-Port die Daten (TX/RX) laufen und über welchen Port und welche Steuerleitung (RTS oder DTR) RESET und ISP (P0.1) angesteuert werden. Beide Signale sind am Chip active low.
+
+| Profil | TX/RX | RESET | ISP (P0.1) |
+|--------|-------|-------|------------|
+| **Standard (ein Port, DTR/RTS)** – voreingestellt | USB1 | USB1 · DTR | USB1 · RTS |
+| **FT2232H (RESET/ISP auf Kanal B)** | USB1 | USB2 · RTS | USB2 · DTR |
+
+- Eigene Profile anlegen, bearbeiten und löschen (Einstellungen → Hardware-Steuerung → *Konfigurieren...*)
+- Bei Mehrkanal-Adaptern (z. B. FT2232H/FT4232H) können RESET/ISP auf einen eigenen Kanal gelegt werden, sodass ein Terminal am Datenkanal die Steuerleitungen nicht stören kann
+- Option **„Leitung läuft über Inverter“** je Signal, für Adapter, bei denen RESET oder ISP über einen Inverter zum Chip geführt werden
+- Die integrierten Profile sind schreibgeschützt, lassen sich aber als Vorlage für ein eigenes Profil kopieren
+- Prüfungen: RESET und ISP dürfen nicht dieselbe Leitung nutzen; Profile, die mehr Ports benötigen, als der gewählte Adapter hat, werden markiert und sind nicht auswählbar
+- Das gewählte Profil wird nicht per Android-Backup wiederhergestellt – nach einer Neuinstallation ist immer das Standard-Profil aktiv
 
 ### Firmware-Katalog
 - Online-Firmware-Katalog direkt aus dem Selfbus GitHub-Repository
@@ -57,6 +73,7 @@ Die beiden Funktionsbereiche sind über ein **Hamburger-Menü** (Navigation Draw
 - Oszillator-Frequenz (Standard: 12000 kHz)
 - ISP-Timing-Parameter (T1, T2, Reset-Dauer, Post-Reset-Delay)
 - Auto-Reset nach Flash-Vorgang (ein/aus)
+- Hardware-Profil für die RESET/ISP-Verdrahtung (siehe oben)
 - Boot-Deskriptor-Adresse (manuell konfigurierbar)
 - Read-Chunk-Größe (128/256/512 Bytes)
 
@@ -91,7 +108,11 @@ Die beiden Funktionsbereiche sind über ein **Hamburger-Menü** (Navigation Draw
 | Adapter | VID:PID |
 |---------|---------|
 | Silicon Labs CP210x | 10C4:EA60 |
-| FTDI FT232 | 0403:6001 |
+| FTDI FT232R | 0403:6001 |
+| FTDI FT2232H (2 Ports) | 0403:6010 |
+| FTDI FT4232H (4 Ports) | 0403:6011 |
+| FTDI FT232H | 0403:6014 |
+| FTDI FT231X | 0403:6015 |
 | QinHeng CH340 | 1A86:7523 |
 | QinHeng CH9102 | 1A86:55D4 |
 | Prolific PL2303 | 067B:2303 |
