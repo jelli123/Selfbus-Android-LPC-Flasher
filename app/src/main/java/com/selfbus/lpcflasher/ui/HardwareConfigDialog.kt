@@ -5,6 +5,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
@@ -74,6 +75,11 @@ fun HardwareConfigDialog(detectedPortCount: Int?, onDismiss: () -> Unit) {
                         onSelect = {
                             selectedId = config.id
                             HardwareConfigs.select(config.id)
+                        },
+                        // Built-ins are read-only; offer them as template for a custom copy
+                        onCopy = {
+                            editTarget = config
+                            showEditor = true
                         }
                     )
                 }
@@ -153,24 +159,36 @@ private fun HardwareConfigRow(
     selected: Boolean,
     detectedPortCount: Int?,
     onSelect: () -> Unit,
+    onCopy: (() -> Unit)? = null,
     onEdit: (() -> Unit)? = null,
     onDelete: (() -> Unit)? = null
 ) {
     val t = I18n::t
+    // A profile the attached device cannot serve can't be selected (it would fail on connect)
+    val portsMissing = detectedPortCount != null && config.requiredPorts() > detectedPortCount
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        RadioButton(selected = selected, onClick = onSelect)
+        RadioButton(selected = selected, onClick = onSelect, enabled = !portsMissing || selected)
         Column(modifier = Modifier.weight(1f)) {
-            Text(config.displayName, style = MaterialTheme.typography.bodyMedium)
+            Text(
+                config.displayName,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (portsMissing) Color.Gray else Color.Unspecified
+            )
             Text(config.summary, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-            if (detectedPortCount != null && config.requiredPorts() > detectedPortCount) {
+            if (portsMissing) {
                 Text(
                     t("hardwareConfigPortsMissing").format(config.requiredPorts()),
                     style = MaterialTheme.typography.bodySmall,
                     color = WarningColor
                 )
+            }
+        }
+        if (onCopy != null) {
+            IconButton(onClick = onCopy, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Default.ContentCopy, contentDescription = t("hardwareConfigCopy"), modifier = Modifier.size(18.dp))
             }
         }
         if (onEdit != null) {
@@ -196,7 +214,17 @@ private fun HardwareConfigEditDialog(
     onSave: (HardwareConfig) -> Unit
 ) {
     val t = I18n::t
-    var name by remember { mutableStateOf(existing?.name ?: "") }
+    // A built-in passed in is a template: the result is saved as a new custom profile
+    val isEdit = existing != null && !existing.builtIn
+    var name by remember {
+        mutableStateOf(
+            when {
+                existing == null -> ""
+                isEdit -> existing.name
+                else -> "${existing.displayName} ${t("hardwareConfigCopySuffix")}"
+            }
+        )
+    }
     var dataPort by remember { mutableIntStateOf(existing?.dataPortIndex ?: 0) }
     var resetPort by remember { mutableIntStateOf(existing?.resetPortIndex ?: 0) }
     var resetLine by remember { mutableStateOf(existing?.resetLine ?: ControlLine.DTR) }
@@ -211,7 +239,7 @@ private fun HardwareConfigEditDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (existing != null) t("hardwareConfigEditTitleEdit") else t("hardwareConfigEditTitleNew")) },
+        title = { Text(if (isEdit) t("hardwareConfigEditTitleEdit") else t("hardwareConfigEditTitleNew")) },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
@@ -276,7 +304,7 @@ private fun HardwareConfigEditDialog(
                     }
                     onSave(
                         HardwareConfig(
-                            id = existing?.id ?: UUID.randomUUID().toString(),
+                            id = if (isEdit) existing!!.id else UUID.randomUUID().toString(),
                             name = name.trim(),
                             dataPortIndex = dataPort,
                             resetPortIndex = resetPort,

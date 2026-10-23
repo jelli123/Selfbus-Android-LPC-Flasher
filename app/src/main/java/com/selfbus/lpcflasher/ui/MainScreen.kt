@@ -650,6 +650,16 @@ fun SettingsSection(viewModel: FlasherViewModel) {
                     Text(t("hardwareProfile"), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                     Text(hardwareProfile.displayName, style = MaterialTheme.typography.bodyMedium)
                     Text(hardwareProfile.summary, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    val requiredPorts = maxOf(
+                        hardwareProfile.dataPortIndex, hardwareProfile.resetPortIndex, hardwareProfile.ispPortIndex
+                    ) + 1
+                    if (detectedPortCount != null && requiredPorts > detectedPortCount) {
+                        Text(
+                            t("hardwareConfigPortsMissing").format(requiredPorts),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
                 }
                 TextButton(onClick = { showHardwareConfig = true }) {
                     Text(t("hardwareProfileConfigure"))
