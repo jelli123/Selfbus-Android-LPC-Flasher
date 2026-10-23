@@ -344,15 +344,24 @@ class FlashOperations(private val serial: UsbSerialManager) {
         }
     }
 
-    /** Read flash data at a given address. */
+    /**
+     * Read flash data at a given address.
+     *
+     * The NXP UART ISP bootloader's `R` command requires the byte count to be
+     * a multiple of 4 (COUNT_ERROR / "6" otherwise); this only matters for
+     * the last chunk of a read loop, which is often a remainder that isn't
+     * 4-byte aligned. Round the requested count up to the bootloader and
+     * trim the padding off the result locally.
+     */
     suspend fun readFlashData(address: Int, length: Int): List<Int> {
+        val alignedLength = (length + 3) and 3.inv()
         var lastResponse: String? = null
 
         repeat(3) { attempt ->
-            val response = sendISPCommand("R $address $length")
+            val response = sendISPCommand("R $address $alignedLength")
             lastResponse = response
             if (response == "0") {
-                val expectedLines = (length + 44) / 45
+                val expectedLines = (alignedLength + 44) / 45
                 val uuLines = mutableListOf<String>()
 
                 for (i in 0 until expectedLines + 5) {
@@ -371,10 +380,10 @@ class FlashOperations(private val serial: UsbSerialManager) {
                 delay(10)
 
                 val decoded = UuCodec.decode(uuLines)
-                if (decoded.size >= length) {
+                if (decoded.size >= alignedLength) {
                     return decoded.take(length)
                 }
-                Logger.debug("Read short data at 0x${address.toString(16)}: ${decoded.size}/$length")
+                Logger.debug("Read short data at 0x${address.toString(16)}: ${decoded.size}/$alignedLength")
             } else {
                 Logger.debug("Read error at 0x${address.toString(16)} (try ${attempt + 1}): $response")
             }
