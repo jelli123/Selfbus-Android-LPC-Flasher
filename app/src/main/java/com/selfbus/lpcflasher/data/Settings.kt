@@ -12,10 +12,18 @@ object Settings {
     private const val PREFS_NAME = "lpc11xx_flasher_settings"
     private const val LANG_KEY = "lpc11xx_flasher_language"
 
+    /**
+     * Device-local settings, excluded from Android backup (see res/xml/backup_rules.xml
+     * and data_extraction_rules.xml) so a fresh install starts with the defaults.
+     */
+    const val LOCAL_PREFS_NAME = "lpc11xx_flasher_local"
+
     private lateinit var prefs: SharedPreferences
+    private lateinit var localPrefs: SharedPreferences
 
     fun init(context: Context) {
         prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        localPrefs = context.getSharedPreferences(LOCAL_PREFS_NAME, Context.MODE_PRIVATE)
     }
 
     // ---- Individual setting accessors ----
@@ -48,10 +56,14 @@ object Settings {
         get() = prefs.getBoolean("autoResetAfterFlash", true)
         set(v) = prefs.edit().putBoolean("autoResetAfterFlash", v).apply()
 
-    /** Id of the active [HardwareConfig] wiring profile (built-in or custom). */
+    /**
+     * Id of the active [HardwareConfig] wiring profile (built-in or custom).
+     * Kept device-local: it depends on the adapter at hand, so a reinstall
+     * must not restore e.g. a two-port profile from a backup.
+     */
     var selectedHardwareConfigId: String
-        get() = prefs.getString("selectedHardwareConfigId", HardwareConfigs.ORIGINAL_ID) ?: HardwareConfigs.ORIGINAL_ID
-        set(v) = prefs.edit().putString("selectedHardwareConfigId", v).apply()
+        get() = localPrefs.getString("selectedHardwareConfigId", HardwareConfigs.ORIGINAL_ID) ?: HardwareConfigs.ORIGINAL_ID
+        set(v) = localPrefs.edit().putString("selectedHardwareConfigId", v).apply()
 
     /** JSON-encoded list of user-defined [HardwareConfig] profiles. */
     var customHardwareConfigsJson: String

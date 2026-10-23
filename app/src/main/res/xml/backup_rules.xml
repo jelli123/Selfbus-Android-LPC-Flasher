@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Auto Backup rules for Android 11 and lower (android:fullBackupContent). -->
+<full-backup-content>
+    <!-- Device-local settings (active hardware profile) start fresh on a new install -->
+    <exclude domain="sharedpref" path="lpc11xx_flasher_local.xml" />
+</full-backup-content>
